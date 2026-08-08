@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <title>西尔象棋盲棋</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- 状态栏 -->
+        <div id="status-bar">
+            <span id="turn-info">红方走棋</span>
+            <span id="round-info">第 1 回合</span>
+        </div>
+
+        <!-- 棋盘区域 -->
+        <div id="board-container">
+            <canvas id="board"></canvas>
+            <div id="list-container" style="display: none;"></div>
+        </div>
+
+        <!-- 工具栏 -->
+        <div id="toolbar">
+            <button class="tool-btn" id="btn-new" aria-label="新局">
+                <span class="icon">♟</span>
+                <span class="label">新局</span>
+            </button>
+            <button class="tool-btn" id="btn-undo" aria-label="悔棋">
+                <span class="icon">↶</span>
+                <span class="label">悔棋</span>
+            </button>
+            <button class="tool-btn" id="btn-speak" aria-label="播报局面">
+                <span class="icon">🔊</span>
+                <span class="label">播报</span>
+            </button>
+            <button class="tool-btn" id="btn-repeat" aria-label="重复播报">
+                <span class="icon">🔁</span>
+                <span class="label">重复</span>
+            </button>
+            <button class="tool-btn" id="btn-mode" aria-label="切换模式">
+                <span class="icon">⚔</span>
+                <span class="label">双人</span>
+            </button>
+            <button class="tool-btn" id="btn-voice" aria-label="语音指令">
+                <span class="icon">🎤</span>
+                <span class="label">语音</span>
+            </button>
+            <button class="tool-btn" id="btn-list" aria-label="列表模式">
+                <span class="icon">☰</span>
+                <span class="label">列表</span>
+            </button>
+            <button class="tool-btn" id="btn-help" aria-label="帮助">
+                <span class="icon">?</span>
+                <span class="label">帮助</span>
+            </button>
+        </div>
+    </div>
+
+    <script src="chess.js"></script>
+    <script src="app.js"></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('service-worker.js');
+        }
+    </script>
+</body>
+</html>
