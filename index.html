@@ -17,6 +17,9 @@
             <span id="round-info">第 1 回合</span>
         </div>
 
+        <!-- 可见消息区域（语音失效时也能看到提示） -->
+        <div id="message-bar"></div>
+
         <!-- 棋盘区域 -->
         <div id="board-container">
             <canvas id="board"></canvas>
@@ -26,7 +29,7 @@
         <!-- 工具栏 -->
         <div id="toolbar">
             <button class="tool-btn" id="btn-new" aria-label="新局">
-                <span class="icon">♟</span>
+                <span class="icon"></span>
                 <span class="label">新局</span>
             </button>
             <button class="tool-btn" id="btn-undo" aria-label="悔棋">
