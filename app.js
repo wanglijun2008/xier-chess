@@ -21,7 +21,22 @@
     // 语音合成
     const synth = window.speechSynthesis;
     let currentUtterance = null;
-    let lastSpokenMessage = '西尔象棋盲棋已启动，红方先行'; // 修复：追踪最后播报内容
+    let lastSpokenMessage = '西尔象棋盲棋已启动，红方先行';
+    let messageTimeout = null;
+
+    // 显示可见文字提示（语音失效时也能看到）
+    function showMessage(text, duration) {
+        duration = duration || 3000;
+        var bar = document.getElementById('message-bar');
+        if (bar) {
+            bar.textContent = text;
+            bar.className = 'message-show';
+            if (messageTimeout) clearTimeout(messageTimeout);
+            messageTimeout = setTimeout(function() {
+                bar.className = '';
+            }, duration);
+        }
+    }
 
     // ========== 功能1：游戏模式 ==========
     let gameMode = 'pvp'; // 'pvp' 或 'pve'
@@ -448,17 +463,22 @@
         }, 1000);
     }
 
-    // 语音播报
+    // 语音播报（同时显示可见文字）
     function speak(text) {
-        if (currentUtterance) {
-            synth.cancel();
+        showMessage(text);
+        if (!synth) return;
+        try {
+            if (currentUtterance) {
+                synth.cancel();
+            }
+            currentUtterance = new SpeechSynthesisUtterance(text);
+            currentUtterance.lang = 'zh-CN';
+            currentUtterance.rate = 1.0;
+            currentUtterance.pitch = 1.0;
+            synth.speak(currentUtterance);
+        } catch (e) {
+            // 语音合成失败，至少文字提示还在
         }
-
-        currentUtterance = new SpeechSynthesisUtterance(text);
-        currentUtterance.lang = 'zh-CN';
-        currentUtterance.rate = 1.0;
-        currentUtterance.pitch = 1.0;
-        synth.speak(currentUtterance);
     }
 
     // 更新状态栏
@@ -584,15 +604,16 @@
     // ========== 功能2：语音指令识别 ==========
     // ========== 修复：支持连续语音模式，盲人可持续下棋 ==========
     function toggleVoice() {
-        if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-            speak('您的浏览器不支持语音识别');
+        var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            showMessage('此浏览器不支持语音识别，请用Chrome浏览器', 5000);
+            speak('您的浏览器不支持语音识别，请使用Chrome浏览器打开');
             return;
         }
 
         if (isListening) {
             stopVoiceRecognition();
         } else {
-            // 默认开启连续模式
             voiceContinuous = true;
             startVoiceRecognition();
         }
