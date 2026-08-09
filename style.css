@@ -41,6 +41,25 @@ body {
     color: #888;
 }
 
+/* 可见消息栏 */
+#message-bar {
+    min-height: 0;
+    padding: 0 16px;
+    background: #1a3a1a;
+    color: #4CAF50;
+    font-size: 15px;
+    text-align: center;
+    line-height: 1.6;
+    overflow: hidden;
+    transition: all 0.3s;
+    border-bottom: 1px solid #333;
+}
+
+#message-bar.message-show {
+    min-height: 40px;
+    padding: 8px 16px;
+}
+
 /* 棋盘区域 */
 #board-container {
     flex: 1;
