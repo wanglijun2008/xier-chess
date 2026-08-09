@@ -604,21 +604,24 @@
         recognition.lang = 'zh-CN';
         recognition.continuous = voiceContinuous; // 连续模式
         recognition.interimResults = false;
+        recognition.maxAlternatives = 1;
 
         recognition.onstart = function() {
             isListening = true;
             document.querySelector('#btn-voice .label').textContent = '监听';
             document.querySelector('#btn-voice').style.borderColor = '#4CAF50';
+            // 只在非连续模式下播报提示，连续模式下不播报（避免TTS干扰麦克风）
             if (!voiceContinuous) {
                 speak('请说出棋谱，例如炮二平五');
-            } else {
-                speak('语音指令已开启，请说出棋谱。例如炮二平五。说完一句后会自动继续监听。');
             }
         };
 
         recognition.onresult = function(event) {
             const transcript = event.results[0][0].transcript;
-            speak('识别到：' + transcript);
+            // 连续模式下不播报"识别到"，避免TTS抢占音频通道导致麦克风中断
+            if (!voiceContinuous) {
+                speak('识别到：' + transcript);
+            }
 
             const cmd = game.parseVoiceCommand(transcript);
             if (cmd) {
@@ -654,7 +657,22 @@
         };
 
         recognition.onerror = function(event) {
-            if (event.error !== 'no-speech' && event.error !== 'aborted') {
+            // no-speech 和 aborted 是正常情况，不播报
+            if (event.error === 'no-speech' || event.error === 'aborted') {
+                return;
+            }
+            if (event.error === 'audio-capture') {
+                speak('无法访问麦克风，请检查权限');
+                stopVoiceRecognition();
+                return;
+            }
+            if (event.error === 'not-allowed') {
+                speak('麦克风权限被拒绝，请在浏览器设置中允许麦克风访问');
+                stopVoiceRecognition();
+                return;
+            }
+            // 其他错误在连续模式下不播报，避免干扰
+            if (!voiceContinuous) {
                 speak('语音识别错误：' + event.error);
             }
             if (!voiceContinuous) {
@@ -663,13 +681,18 @@
         };
 
         recognition.onend = function() {
-            // 连续模式下自动重启
+            // 连续模式下自动重启，但要等TTS播完再重启
             if (voiceContinuous && isListening && !game.gameOver) {
-                try {
-                    recognition.start();
-                } catch (e) {
-                    // 防止重复启动
-                }
+                // 等300ms让TTS有机会释放音频通道
+                setTimeout(function() {
+                    if (isListening && !game.gameOver) {
+                        try {
+                            recognition.start();
+                        } catch (e) {
+                            // 已经在运行，忽略
+                        }
+                    }
+                }, 300);
             } else {
                 stopVoiceRecognition();
             }
