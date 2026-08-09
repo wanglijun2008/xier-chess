@@ -566,7 +566,7 @@
             }
         } else {
             playErrorSound();
-            showMessage('无法识别棋谱，请输入如：炮二平五', 3000);
+            showMessage('无法识别棋谱，请输入如：炮2平5', 3000);
         }
     }
 
@@ -613,7 +613,7 @@
 
     // 帮助
     function showHelp() {
-        const help = '操作说明：点击棋子选中，滑动走棋。语音指令：点击语音按钮后说棋谱，如炮二平五。底部按钮：新局、悔棋、播报、重复、模式切换、语音指令、列表模式、帮助。';
+        const help = '操作说明：点击棋子选中，滑动走棋。输入棋谱如炮2平5（列1-9右到左）。底部按钮：新局、悔棋、播报、重复、模式、语音、列表、帮助。';
         speak(help);
         lastSpokenMessage = help;
     }
@@ -687,7 +687,7 @@
             document.querySelector('#btn-voice').style.borderColor = '#4CAF50';
             // 只在非连续模式下播报提示，连续模式下不播报（避免TTS干扰麦克风）
             if (!voiceContinuous) {
-                speak('请说出棋谱，例如炮二平五');
+                speak('请说出棋谱，例如炮2平5');
             }
         };
 
@@ -727,7 +727,7 @@
                 }
             } else {
                 playErrorSound();
-                speak('无法识别棋谱格式，请说如炮二平五');
+                speak('无法识别棋谱格式，请说如炮2平5');
             }
         };
 
@@ -829,7 +829,9 @@
             var sideName = item.piece.color === 'red' ? '红' : '黑';
             html += '<div class="' + cls + '" data-index="' + index + '">';
             html += '<div class="piece-name">' + sideName + item.piece.name + '</div>';
-            html += '<div class="piece-pos">' + game.getColumnName(item.col, item.piece.color) + '路' + game.getRowName(item.row) + '线</div>';
+            var uCol = game.internalToUserCol(item.col);
+            var uRow = game.internalToUserRow(item.row);
+            html += '<div class="piece-pos">第' + uCol + '列第' + uRow + '行</div>';
             html += '</div>';
         });
 
