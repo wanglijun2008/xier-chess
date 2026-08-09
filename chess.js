@@ -388,70 +388,72 @@ class ChineseChess {
         return null;
     }
 
+    // ========== 统一坐标系：列1-9(右→左)，行0-9(下→上) ==========
+    // 内部坐标 → 用户坐标
+    internalToUserCol(col) { return 9 - col; }  // 内部0-8 → 用户9-1
+    internalToUserRow(row) { return 9 - row; }  // 内部0-9 → 用户9-0
+    // 用户坐标 → 内部坐标
+    userToInternalCol(uCol) { return 9 - uCol; }
+    userToInternalRow(uRow) { return 9 - uRow; }
+
     describePiece(row, col, piece) {
-        const colName = this.getColumnName(col, piece.color);
-        const rowName = this.getRowName(row);
-        return `${piece.color === 'red' ? '红方' : '黑方'}，${piece.name}，位于${colName}路第${rowName}线`;
+        const uCol = this.internalToUserCol(col);
+        const uRow = this.internalToUserRow(row);
+        return `${piece.color === 'red' ? '红方' : '黑方'}${piece.name}，第${uCol}列第${uRow}行`;
     }
 
     describeMove(fromRow, fromCol, toRow, toCol, piece) {
-        const fromColName = this.getColumnName(fromCol, piece.color);
-        const toColName = this.getColumnName(toCol, piece.color);
+        const uFromCol = this.internalToUserCol(fromCol);
+        const uToCol = this.internalToUserCol(toCol);
 
         let action = '';
+        const isForward = (piece.color === 'red' && toRow < fromRow) ||
+                          (piece.color === 'black' && toRow > fromRow);
         if (fromRow === toRow) {
             action = '平';
-        } else if ((piece.color === 'red' && toRow < fromRow) ||
-                   (piece.color === 'black' && toRow > fromRow)) {
+        } else if (isForward) {
             action = '进';
         } else {
             action = '退';
         }
 
-        const target = action === '平' ? toColName :
-                       (piece.type === 'king' || piece.type === 'advisor' ||
-                        piece.type === 'elephant' || piece.type === 'horse' ||
-                        piece.type === 'pawn') ?
-                       this.getRowName(Math.abs(toRow - fromRow)) : toColName;
+        let target;
+        if (action === '平') {
+            target = uToCol;
+        } else if (piece.type === 'rook' || piece.type === 'cannon' || piece.type === 'king') {
+            // 直线棋子：进/退N步
+            target = Math.abs(this.internalToUserRow(toRow) - this.internalToUserRow(fromRow));
+        } else {
+            // 斜线/日字棋子：进/退到第N列
+            target = uToCol;
+        }
 
-        return `${piece.name}${fromColName}${action}${target}`;
+        return `${piece.name}${uFromCol}${action}${target}`;
     }
 
-    getColumnName(col, color) {
-        const redNames = ['九', '八', '七', '六', '五', '四', '三', '二', '一'];
-        const blackNames = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
-        return color === 'red' ? redNames[col] : blackNames[col];
-    }
-
-    getRowName(row) {
-        return ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'][row];
-    }
-
-    // ========== 修复：扫描全部棋盘，不再遗漏过河棋子 ==========
+    // ========== 统一坐标系：扫描全部棋盘 ==========
     describeBoard() {
-        let desc = `${this.currentPlayer === 'red' ? '红方' : '黑方'}走棋。第${this.round}回合。\n`;
+        let desc = `${this.currentPlayer === 'red' ? '红方' : '黑方'}走棋。第${this.round}回合。`;
 
-        // 红方所有棋子（扫描全部10行）
         desc += '红方：';
         let redPieces = [];
         for (let r = 0; r < 10; r++) {
             for (let c = 0; c < 9; c++) {
                 const piece = this.getPiece(r, c);
                 if (piece && piece.color === 'red') {
-                    redPieces.push(`${piece.name}在${this.getColumnName(c, 'red')}路${this.getRowName(r)}线`);
+                    redPieces.push(`${piece.name}${this.internalToUserCol(c)}${this.internalToUserRow(r)}`);
                 }
             }
         }
         desc += redPieces.length > 0 ? redPieces.join('，') + '。' : '无棋子。';
 
-        // 黑方所有棋子（扫描全部10行）
         desc += '黑方：';
         let blackPieces = [];
         for (let r = 0; r < 10; r++) {
             for (let c = 0; c < 9; c++) {
                 const piece = this.getPiece(r, c);
                 if (piece && piece.color === 'black') {
-                    blackPieces.push(`${piece.name}在${this.getColumnName(c, 'black')}路${this.getRowName(r)}线`);
+                    blackPieces.push(`${piece.name}${this.internalToUserCol(c)}${this.internalToUserRow(r)}`);
                 }
             }
         }
@@ -460,161 +462,126 @@ class ChineseChess {
         return desc;
     }
 
-    // ========== 功能2：语音指令解析 ==========
+    // ========== 统一坐标系语音指令解析 ==========
+    // 格式：炮2平5 / 马8进7 / 车1进3 / 兵5进1
+    // 列：1-9（右→左），行：0-9（下→上），双方共用
     parseVoiceCommand(text) {
         if (!text) return null;
         text = text.trim();
 
         const pieceNames = ['帅', '将', '仕', '士', '相', '象', '马', '车', '炮', '兵', '卒'];
-        const redColChars = { '一':0, '二':1, '三':2, '四':3, '五':4, '六':5, '七':6, '八':7, '九':8 };
-        const blackColChars = { '1':0, '2':1, '3':2, '4':3, '5':4, '6':5, '7':6, '8':7, '9':8 };
         const actionChars = ['进', '退', '平'];
 
+        // 提取棋子名
         let pieceName = null;
         for (const pn of pieceNames) {
             if (text.startsWith(pn)) { pieceName = pn; break; }
         }
         if (!pieceName) return null;
 
-        let fromCol = -1;
-        const fromColChar = text[pieceName.length];
-        if (fromColChar in redColChars) {
-            fromCol = redColChars[fromColChar];
-        } else if (fromColChar in blackColChars) {
-            fromCol = blackColChars[fromColChar];
-        }
-        if (fromCol === -1) return null;
+        // 提取起始列（数字1-9）
+        let rest = text.substring(pieceName.length);
+        const colMatch = rest.match(/^([1-9])/);
+        if (!colMatch) return null;
+        const fromUserCol = parseInt(colMatch[1]); // 用户列 1-9
 
-        const actionChar = text[pieceName.length + 1];
-        if (!actionChars.includes(actionChar)) return null;
+        // 提取动作
+        rest = rest.substring(1);
+        const actionMatch = rest.match(/^([进退平])/);
+        if (!actionMatch) return null;
+        const action = actionMatch[1];
 
-        const targetStr = text.substring(pieceName.length + 2);
+        // 提取目标
+        const targetStr = rest.substring(1).trim();
         if (!targetStr) return null;
 
-        return { pieceName, fromCol, action: actionChar, target: targetStr };
+        return { pieceName, fromUserCol, action, target: targetStr };
     }
 
-    // 根据语音指令解析目标位置
+    // 根据统一坐标系解析目标位置
     resolveVoiceMove(cmd) {
         if (!cmd) return null;
         const color = this.currentPlayer;
-        const isRed = color === 'red';
 
-        // 找到对应棋子
+        // 用户列 → 内部列
+        const fromInternalCol = this.userToInternalCol(cmd.fromUserCol);
+
+        // 找到当前方在该列的对应棋子
         let piecePos = null;
         let piece = null;
         for (let r = 0; r < 10; r++) {
-            for (let c = 0; c < 9; c++) {
-                const p = this.getPiece(r, c);
-                if (p && p.name === cmd.pieceName && p.color === color) {
-                    const colMatch = isRed ?
-                        (c === cmd.fromCol) :
-                        (c === cmd.fromCol);
-                    if (colMatch) {
-                        piecePos = { row: r, col: c };
-                        piece = p;
-                        break;
-                    }
-                }
+            const p = this.getPiece(r, fromInternalCol);
+            if (p && p.name === cmd.pieceName && p.color === color) {
+                piecePos = { row: r, col: fromInternalCol };
+                piece = p;
+                break;
             }
-            if (piecePos) break;
         }
         if (!piecePos) return null;
 
         const { row: fromRow, col: fromCol } = piecePos;
         let toRow = fromRow, toCol = fromCol;
-
-        const redColReverse = ['九','八','七','六','五','四','三','二','一'];
-        const redNums = { '一':1, '二':2, '三':3, '四':4, '五':5, '六':6, '七':7, '八':8, '九':9 };
-        const blackNums = { '1':1, '2':2, '3':3, '4':4, '5':5, '6':6, '7':7, '8':8, '9':9 };
+        const targetNum = parseInt(cmd.target);
 
         if (cmd.action === '平') {
-            let targetCol;
-            if (isRed) {
-                targetCol = redColReverse.indexOf(cmd.target);
-            } else {
-                targetCol = parseInt(cmd.target) - 1;
-            }
-            if (targetCol < 0 || targetCol > 8) return null;
-            toCol = targetCol;
+            // 平：目标列（用户坐标1-9）
+            if (isNaN(targetNum) || targetNum < 1 || targetNum > 9) return null;
+            toCol = this.userToInternalCol(targetNum);
             toRow = fromRow;
         } else if (cmd.action === '进') {
             if (piece.type === 'rook' || piece.type === 'cannon' || piece.type === 'king') {
-                let steps;
-                if (isRed) {
-                    steps = redNums[cmd.target] || parseInt(cmd.target);
+                // 直线棋子：进N步（朝对方方向）
+                if (isNaN(targetNum) || targetNum < 1 || targetNum > 9) return null;
+                if (color === 'red') {
+                    toRow = fromRow - targetNum; // 红方向上（内部行减小）
                 } else {
-                    steps = blackNums[cmd.target] || parseInt(cmd.target);
+                    toRow = fromRow + targetNum; // 黑方向下（内部行增大）
                 }
-                if (!steps) return null;
-                if (isRed) {
-                    toRow = fromRow - steps;
-                    toCol = fromCol;
+                toCol = fromCol;
+            } else {
+                // 斜线/日字棋子：进到第N列（用户坐标）
+                if (isNaN(targetNum) || targetNum < 1 || targetNum > 9) return null;
+                toCol = this.userToInternalCol(targetNum);
+                const dc = Math.abs(toCol - fromCol);
+                let dr;
+                if (piece.type === 'horse') {
+                    dr = (dc === 2) ? 1 : 2;
+                } else if (piece.type === 'elephant') {
+                    dr = 2;
                 } else {
-                    toRow = fromRow + steps;
-                    toCol = fromCol;
+                    dr = 1; // advisor, pawn
                 }
-            } else if (piece.type === 'horse' || piece.type === 'advisor' || piece.type === 'pawn') {
-                let targetCol;
-                if (isRed) {
-                    targetCol = redColReverse.indexOf(cmd.target);
+                if (color === 'red') {
+                    toRow = fromRow - dr; // 红方向上
                 } else {
-                    targetCol = parseInt(cmd.target) - 1;
-                }
-                if (targetCol < 0 || targetCol > 8) return null;
-                toCol = targetCol;
-                const dc = Math.abs(targetCol - fromCol);
-                const dr = (piece.type === 'horse') ? (dc === 2 ? 1 : 2) : 1;
-                if (isRed) {
-                    toRow = fromRow - dr;
-                } else {
-                    toRow = fromRow + dr;
-                }
-            } else if (piece.type === 'elephant') {
-                let targetCol;
-                if (isRed) {
-                    targetCol = redColReverse.indexOf(cmd.target);
-                } else {
-                    targetCol = parseInt(cmd.target) - 1;
-                }
-                if (targetCol < 0 || targetCol > 8) return null;
-                toCol = targetCol;
-                if (isRed) {
-                    toRow = fromRow - 2;
-                } else {
-                    toRow = fromRow + 2;
+                    toRow = fromRow + dr; // 黑方向下
                 }
             }
         } else if (cmd.action === '退') {
             if (piece.type === 'rook' || piece.type === 'cannon' || piece.type === 'king') {
-                let steps;
-                if (isRed) {
-                    steps = redNums[cmd.target] || parseInt(cmd.target);
+                // 直线棋子：退N步（远离对方方向）
+                if (isNaN(targetNum) || targetNum < 1 || targetNum > 9) return null;
+                if (color === 'red') {
+                    toRow = fromRow + targetNum; // 红方向下
                 } else {
-                    steps = blackNums[cmd.target] || parseInt(cmd.target);
-                }
-                if (!steps) return null;
-                if (isRed) {
-                    toRow = fromRow + steps;
-                } else {
-                    toRow = fromRow - steps;
+                    toRow = fromRow - targetNum; // 黑方向上
                 }
                 toCol = fromCol;
-            } else if (piece.type === 'horse' || piece.type === 'advisor') {
-                let targetCol;
-                if (isRed) {
-                    targetCol = redColReverse.indexOf(cmd.target);
+            } else {
+                // 斜线/日字棋子：退到第N列
+                if (isNaN(targetNum) || targetNum < 1 || targetNum > 9) return null;
+                toCol = this.userToInternalCol(targetNum);
+                const dc = Math.abs(toCol - fromCol);
+                let dr;
+                if (piece.type === 'horse') {
+                    dr = (dc === 2) ? 1 : 2;
                 } else {
-                    targetCol = parseInt(cmd.target) - 1;
+                    dr = 1; // advisor
                 }
-                if (targetCol < 0 || targetCol > 8) return null;
-                toCol = targetCol;
-                const dc = Math.abs(targetCol - fromCol);
-                const dr = (piece.type === 'horse') ? (dc === 2 ? 1 : 2) : 1;
-                if (isRed) {
-                    toRow = fromRow + dr;
+                if (color === 'red') {
+                    toRow = fromRow + dr; // 红方向下
                 } else {
-                    toRow = fromRow - dr;
+                    toRow = fromRow - dr; // 黑方向上
                 }
             }
         }
