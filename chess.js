@@ -6,7 +6,9 @@ class ChineseChess {
         this.selectedPiece = null;
         this.moveHistory = [];
         this.round = 1;
-        
+        this.gameOver = false;
+        this.winner = null;
+
         // 棋子定义
         this.pieces = {
             'r_king': { name: '帅', color: 'red', type: 'king' },
@@ -29,7 +31,7 @@ class ChineseChess {
     initBoard() {
         // 10行9列的棋盘，null表示空位
         const board = Array(10).fill(null).map(() => Array(9).fill(null));
-        
+
         // 黑方（上方，行0-4）
         board[0][0] = 'b_rook'; board[0][8] = 'b_rook';
         board[0][1] = 'b_horse'; board[0][7] = 'b_horse';
@@ -53,6 +55,12 @@ class ChineseChess {
         return board;
     }
 
+    // 重置游戏状态
+    resetState() {
+        this.gameOver = false;
+        this.winner = null;
+    }
+
     getPiece(row, col) {
         if (row < 0 || row >= 10 || col < 0 || col >= 9) return null;
         const pieceId = this.board[row][col];
@@ -60,6 +68,9 @@ class ChineseChess {
     }
 
     selectPiece(row, col) {
+        if (this.gameOver) {
+            return { success: false, message: '游戏已结束，请开始新局' };
+        }
         const piece = this.getPiece(row, col);
         if (!piece || piece.color !== this.currentPlayer) {
             return { success: false, message: '没有可走的棋子' };
@@ -69,6 +80,9 @@ class ChineseChess {
     }
 
     movePiece(toRow, toCol) {
+        if (this.gameOver) {
+            return { success: false, message: '游戏已结束，请开始新局' };
+        }
         if (!this.selectedPiece) {
             return { success: false, message: '请先选择棋子' };
         }
@@ -80,6 +94,11 @@ class ChineseChess {
         // 检查是否合法走法
         if (!this.isValidMove(fromRow, fromCol, toRow, toCol, piece)) {
             return { success: false, message: '不合法的走法' };
+        }
+
+        // 检查走棋后是否造成己方被将军（不允许送将）
+        if (this.wouldBeInCheck(fromRow, fromCol, toRow, toCol, piece.color)) {
+            return { success: false, message: '这样走会被将军，不允许' };
         }
 
         // 检查是否吃子
@@ -109,21 +128,67 @@ class ChineseChess {
             message += `，吃掉${captured.color === 'red' ? '红方' : '黑方'}${captured.name}`;
         }
 
+        // ========== 关键修复：检查游戏结束 ==========
+        // 1. 检查是否吃掉将/帅
+        if (captured && captured.type === 'king') {
+            this.gameOver = true;
+            this.winner = piece.color;
+            const winnerName = piece.color === 'red' ? '红方' : '黑方';
+            message += `。${winnerName}获胜！`;
+            return { success: true, message, gameOver: true, winner: piece.color };
+        }
+
+        // 2. 检查对方是否被将杀或困毙
+        const opponent = this.currentPlayer;
+        const opponentMoves = this.getAllMoves(opponent);
+        if (opponentMoves.length === 0) {
+            this.gameOver = true;
+            // 如果对方被将军且无棋可走 = 将杀；否则 = 困毙
+            const inCheck = this.isInCheck(opponent);
+            this.winner = inCheck ? (opponent === 'red' ? 'black' : 'red') : (opponent === 'red' ? 'black' : 'red');
+            const winnerName = this.winner === 'red' ? '红方' : '黑方';
+            const loserName = opponent === 'red' ? '红方' : '黑方';
+            if (inCheck) {
+                message += `。${loserName}被将杀，${winnerName}获胜！`;
+            } else {
+                message += `。${loserName}无棋可走（困毙），${winnerName}获胜！`;
+            }
+            return { success: true, message, gameOver: true, winner: this.winner };
+        }
+
+        // 3. 检查将军
+        if (this.isInCheck(opponent)) {
+            message += '，将军！';
+        }
+
         return { success: true, message };
+    }
+
+    // 检查某方走棋后是否会造成己方被将军
+    wouldBeInCheck(fromRow, fromCol, toRow, toCol, color) {
+        const capturedId = this.board[toRow][toCol];
+        const pieceId = this.board[fromRow][fromCol];
+        this.board[toRow][toCol] = pieceId;
+        this.board[fromRow][fromCol] = null;
+
+        const inCheck = this.isInCheck(color);
+
+        // 恢复
+        this.board[fromRow][fromCol] = pieceId;
+        this.board[toRow][toCol] = capturedId;
+
+        return inCheck;
     }
 
     isValidMove(fromRow, fromCol, toRow, toCol, piece) {
         // 基本的边界检查
         if (toRow < 0 || toRow >= 10 || toCol < 0 || toCol >= 9) return false;
-        
+
         // 不能吃自己的棋子
         const target = this.getPiece(toRow, toCol);
         if (target && target.color === piece.color) return false;
 
         // 根据棋子类型检查走法
-        const dr = toRow - fromRow;
-        const dc = toCol - fromCol;
-
         switch (piece.type) {
             case 'king':
                 return this.isValidKingMove(fromRow, fromCol, toRow, toCol, piece);
@@ -144,17 +209,36 @@ class ChineseChess {
     }
 
     isValidKingMove(fromRow, fromCol, toRow, toCol, piece) {
-        // 九宫内一步直行
         const dr = Math.abs(toRow - fromRow);
         const dc = Math.abs(toCol - fromCol);
-        if (dr + dc !== 1) return false;
 
-        // 检查是否在九宫内
-        if (piece.color === 'red') {
-            return toRow >= 7 && toRow <= 9 && toCol >= 3 && toCol <= 5;
-        } else {
-            return toRow >= 0 && toRow <= 2 && toCol >= 3 && toCol <= 5;
+        // 九宫内一步直行
+        if (dr + dc === 1) {
+            if (piece.color === 'red') {
+                return toRow >= 7 && toRow <= 9 && toCol >= 3 && toCol <= 5;
+            } else {
+                return toRow >= 0 && toRow <= 2 && toCol >= 3 && toCol <= 5;
+            }
         }
+
+        // ========== 飞将规则：两将对面 ==========
+        // 将可以在同一列上直接吃掉对方的将（中间无子）
+        if (fromCol === toCol && dc === 0) {
+            const opponentKingName = piece.color === 'red' ? '将' : '帅';
+            // 检查目标位置是否是对方将/帅
+            const targetPiece = this.getPiece(toRow, toCol);
+            if (targetPiece && targetPiece.name === opponentKingName) {
+                // 检查中间是否有棋子
+                const minRow = Math.min(fromRow, toRow);
+                const maxRow = Math.max(fromRow, toRow);
+                for (let r = minRow + 1; r < maxRow; r++) {
+                    if (this.getPiece(r, fromCol)) return false;
+                }
+                return true; // 飞将合法
+            }
+        }
+
+        return false;
     }
 
     isValidAdvisorMove(fromRow, fromCol, toRow, toCol, piece) {
@@ -195,7 +279,7 @@ class ChineseChess {
         const dc = Math.abs(toCol - fromCol);
         if (!((dr === 2 && dc === 1) || (dr === 1 && dc === 2))) return false;
 
-        // 检查蹩马腿
+        // 检查马腿
         if (dr === 2) {
             const legRow = fromRow + (toRow - fromRow) / 2;
             if (this.getPiece(legRow, fromCol)) return false;
@@ -282,13 +366,17 @@ class ChineseChess {
         }
 
         const lastMove = this.moveHistory.pop();
-        this.board[lastMove.from.row][lastMove.from.col] = 
+        this.board[lastMove.from.row][lastMove.from.col] =
             this.board[lastMove.to.row][lastMove.to.col];
-        this.board[lastMove.to.row][lastMove.to.col] = 
+        this.board[lastMove.to.row][lastMove.to.col] =
             lastMove.captured ? this.getPieceId(lastMove.captured) : null;
 
         this.currentPlayer = this.currentPlayer === 'red' ? 'black' : 'red';
         if (this.currentPlayer === 'black') this.round--;
+
+        // 悔棋时重置游戏结束状态
+        this.gameOver = false;
+        this.winner = null;
 
         return { success: true, message: '已悔棋' };
     }
@@ -309,21 +397,21 @@ class ChineseChess {
     describeMove(fromRow, fromCol, toRow, toCol, piece) {
         const fromColName = this.getColumnName(fromCol, piece.color);
         const toColName = this.getColumnName(toCol, piece.color);
-        
+
         let action = '';
         if (fromRow === toRow) {
             action = '平';
-        } else if ((piece.color === 'red' && toRow < fromRow) || 
+        } else if ((piece.color === 'red' && toRow < fromRow) ||
                    (piece.color === 'black' && toRow > fromRow)) {
             action = '进';
         } else {
             action = '退';
         }
 
-        const target = action === '平' ? toColName : 
-                       (piece.type === 'king' || piece.type === 'advisor' || 
-                        piece.type === 'elephant' || piece.type === 'horse' || 
-                        piece.type === 'pawn') ? 
+        const target = action === '平' ? toColName :
+                       (piece.type === 'king' || piece.type === 'advisor' ||
+                        piece.type === 'elephant' || piece.type === 'horse' ||
+                        piece.type === 'pawn') ?
                        this.getRowName(Math.abs(toRow - fromRow)) : toColName;
 
         return `${piece.name}${fromColName}${action}${target}`;
@@ -339,31 +427,39 @@ class ChineseChess {
         return ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'][row];
     }
 
+    // ========== 修复：扫描全部棋盘，不再遗漏过河棋子 ==========
     describeBoard() {
         let desc = `${this.currentPlayer === 'red' ? '红方' : '黑方'}走棋。第${this.round}回合。\n`;
-        
+
+        // 红方所有棋子（扫描全部10行）
         desc += '红方：';
-        for (let r = 9; r >= 5; r--) {
+        let redPieces = [];
+        for (let r = 0; r < 10; r++) {
             for (let c = 0; c < 9; c++) {
                 const piece = this.getPiece(r, c);
                 if (piece && piece.color === 'red') {
-                    desc += `${piece.name}在${this.getColumnName(c, 'red')}路${this.getRowName(r)}线，`;
+                    redPieces.push(`${piece.name}在${this.getColumnName(c, 'red')}路${this.getRowName(r)}线`);
                 }
             }
         }
+        desc += redPieces.length > 0 ? redPieces.join('，') + '。' : '无棋子。';
 
+        // 黑方所有棋子（扫描全部10行）
         desc += '黑方：';
-        for (let r = 0; r <= 4; r++) {
+        let blackPieces = [];
+        for (let r = 0; r < 10; r++) {
             for (let c = 0; c < 9; c++) {
                 const piece = this.getPiece(r, c);
                 if (piece && piece.color === 'black') {
-                    desc += `${piece.name}在${this.getColumnName(c, 'black')}路${this.getRowName(r)}线，`;
+                    blackPieces.push(`${piece.name}在${this.getColumnName(c, 'black')}路${this.getRowName(r)}线`);
                 }
             }
         }
+        desc += blackPieces.length > 0 ? blackPieces.join('，') + '。' : '无棋子。';
 
         return desc;
     }
+
     // ========== 功能2：语音指令解析 ==========
     parseVoiceCommand(text) {
         if (!text) return null;
@@ -372,7 +468,6 @@ class ChineseChess {
         const pieceNames = ['帅', '将', '仕', '士', '相', '象', '马', '车', '炮', '兵', '卒'];
         const redColChars = { '一':0, '二':1, '三':2, '四':3, '五':4, '六':5, '七':6, '八':7, '九':8 };
         const blackColChars = { '1':0, '2':1, '3':2, '4':3, '5':4, '6':5, '7':6, '8':7, '9':8 };
-        const redColReverse = ['九','八','七','六','五','四','三','二','一'];
         const actionChars = ['进', '退', '平'];
 
         let pieceName = null;
@@ -412,13 +507,8 @@ class ChineseChess {
             for (let c = 0; c < 9; c++) {
                 const p = this.getPiece(r, c);
                 if (p && p.name === cmd.pieceName && p.color === color) {
-                    const expectedCol = isRed ?
-                        ['九','八','七','六','五','四','三','二','一'].indexOf(
-                            ['九','八','七','六','五','四','三','二','一'][c]
-                        ) : c;
-                    // 匹配列号
                     const colMatch = isRed ?
-                        (['九','八','七','六','五','四','三','二','一'][c] === ['九','八','七','六','五','四','三','二','一'][cmd.fromCol]) :
+                        (c === cmd.fromCol) :
                         (c === cmd.fromCol);
                     if (colMatch) {
                         piecePos = { row: r, col: c };
@@ -439,7 +529,6 @@ class ChineseChess {
         const blackNums = { '1':1, '2':2, '3':3, '4':4, '5':5, '6':6, '7':7, '8':8, '9':9 };
 
         if (cmd.action === '平') {
-            // 平：目标列
             let targetCol;
             if (isRed) {
                 targetCol = redColReverse.indexOf(cmd.target);
@@ -451,7 +540,6 @@ class ChineseChess {
             toRow = fromRow;
         } else if (cmd.action === '进') {
             if (piece.type === 'rook' || piece.type === 'cannon' || piece.type === 'king') {
-                // 直线棋子：进=行数变化
                 let steps;
                 if (isRed) {
                     steps = redNums[cmd.target] || parseInt(cmd.target);
@@ -467,7 +555,6 @@ class ChineseChess {
                     toCol = fromCol;
                 }
             } else if (piece.type === 'horse' || piece.type === 'advisor' || piece.type === 'pawn') {
-                // 日字/斜线棋子：进=目标列号
                 let targetCol;
                 if (isRed) {
                     targetCol = redColReverse.indexOf(cmd.target);
@@ -476,10 +563,8 @@ class ChineseChess {
                 }
                 if (targetCol < 0 || targetCol > 8) return null;
                 toCol = targetCol;
-                // 计算目标行
                 const dc = Math.abs(targetCol - fromCol);
-                const dr = (piece.type === 'horse') ? (dc === 2 ? 1 : 2) :
-                           (piece.type === 'advisor') ? 1 : 1;
+                const dr = (piece.type === 'horse') ? (dc === 2 ? 1 : 2) : 1;
                 if (isRed) {
                     toRow = fromRow - dr;
                 } else {
@@ -542,12 +627,20 @@ class ChineseChess {
 
     // 不依赖 selectedPiece 的走棋方法
     movePieceByCoords(fromRow, fromCol, toRow, toCol) {
+        if (this.gameOver) {
+            return { success: false, message: '游戏已结束，请开始新局' };
+        }
         const piece = this.getPiece(fromRow, fromCol);
         if (!piece) return { success: false, message: '起始位置没有棋子' };
         if (piece.color !== this.currentPlayer) return { success: false, message: '不是该方的棋子' };
 
         if (!this.isValidMove(fromRow, fromCol, toRow, toCol, piece)) {
             return { success: false, message: '不合法的走法' };
+        }
+
+        // 检查走棋后是否造成己方被将军
+        if (this.wouldBeInCheck(fromRow, fromCol, toRow, toCol, piece.color)) {
+            return { success: false, message: '这样走会被将军，不允许' };
         }
 
         const captured = this.getPiece(toRow, toCol);
@@ -571,12 +664,40 @@ class ChineseChess {
             message += `，吃掉${captured.color === 'red' ? '红方' : '黑方'}${captured.name}`;
         }
 
+        // ========== 检查游戏结束 ==========
+        if (captured && captured.type === 'king') {
+            this.gameOver = true;
+            this.winner = piece.color;
+            const winnerName = piece.color === 'red' ? '红方' : '黑方';
+            message += `。${winnerName}获胜！`;
+            return { success: true, message, gameOver: true, winner: piece.color };
+        }
+
+        const opponent = this.currentPlayer;
+        const opponentMoves = this.getAllMoves(opponent);
+        if (opponentMoves.length === 0) {
+            this.gameOver = true;
+            const inCheck = this.isInCheck(opponent);
+            this.winner = inCheck ? (opponent === 'red' ? 'black' : 'red') : (opponent === 'red' ? 'black' : 'red');
+            const winnerName = this.winner === 'red' ? '红方' : '黑方';
+            const loserName = opponent === 'red' ? '红方' : '黑方';
+            if (inCheck) {
+                message += `。${loserName}被将杀，${winnerName}获胜！`;
+            } else {
+                message += `。${loserName}无棋可走（困毙），${winnerName}获胜！`;
+            }
+            return { success: true, message, gameOver: true, winner: this.winner };
+        }
+
+        if (this.isInCheck(opponent)) {
+            message += '，将军！';
+        }
+
         return { success: true, message };
     }
 
     // 将军检测
     isInCheck(color) {
-        // 找到该方将/帅位置
         let kingRow = -1, kingCol = -1;
         const kingName = color === 'red' ? '帅' : '将';
         for (let r = 0; r < 10; r++) {
@@ -591,7 +712,6 @@ class ChineseChess {
         if (kingRow < 0) return true; // 将不存在=被吃=被将
 
         const opponent = color === 'red' ? 'black' : 'red';
-        // 检查对方所有棋子是否能攻击到将
         for (let r = 0; r < 10; r++) {
             for (let c = 0; c < 9; c++) {
                 const p = this.getPiece(r, c);
@@ -605,7 +725,7 @@ class ChineseChess {
         return false;
     }
 
-    // 获取某方所有合法走法
+    // 获取某方所有合法走法（排除送将的走法）
     getAllMoves(color) {
         const moves = [];
         for (let r = 0; r < 10; r++) {
@@ -615,7 +735,10 @@ class ChineseChess {
                     for (let tr = 0; tr < 10; tr++) {
                         for (let tc = 0; tc < 9; tc++) {
                             if (this.isValidMove(r, c, tr, tc, p)) {
-                                moves.push({ fromRow: r, fromCol: c, toRow: tr, toCol: tc, piece: p });
+                                // 排除会造成己方被将军的走法
+                                if (!this.wouldBeInCheck(r, c, tr, tc, color)) {
+                                    moves.push({ fromRow: r, fromCol: c, toRow: tr, toCol: tc, piece: p });
+                                }
                             }
                         }
                     }
@@ -636,15 +759,12 @@ class ChineseChess {
     getPositionBonus(piece, row, col) {
         let bonus = 0;
         if (piece.type === 'pawn') {
-            // 过河兵加分
             if (piece.color === 'red' && row < 5) bonus += 20;
             if (piece.color === 'black' && row > 4) bonus += 20;
         }
-        // 中心位加分
         const centerColBonus = (4 - Math.abs(col - 4)) * 3;
         bonus += centerColBonus;
         if (piece.type === 'horse') {
-            // 马在中心更灵活
             bonus += (4 - Math.abs(row - 4.5)) * 2;
         }
         return bonus;
@@ -748,6 +868,20 @@ class ChineseChess {
             for (let c = 0; c < 9; c++) {
                 const p = this.getPiece(r, c);
                 if (p && p.color === color) {
+                    pieces.push({ row: r, col: c, piece: p });
+                }
+            }
+        }
+        return pieces;
+    }
+
+    // 获取棋盘上所有棋子（双方）
+    getAllPieces() {
+        const pieces = [];
+        for (let r = 0; r < 10; r++) {
+            for (let c = 0; c < 9; c++) {
+                const p = this.getPiece(r, c);
+                if (p) {
                     pieces.push({ row: r, col: c, piece: p });
                 }
             }
