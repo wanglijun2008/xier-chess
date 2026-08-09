@@ -81,7 +81,7 @@ body {
 .list-header {
     font-size: 18px;
     font-weight: bold;
-    color: #ff6b6b;
+    color: #FFD700;
     margin-bottom: 16px;
     text-align: center;
 }
@@ -117,8 +117,18 @@ body {
     border-color: #66bb6a;
 }
 
+/* 红方棋子列表样式 */
+.list-piece.red-piece {
+    border-left: 4px solid #ff6b6b;
+}
+
+/* 黑方棋子列表样式 */
+.list-piece.black-piece {
+    border-left: 4px solid #666;
+}
+
 .list-piece .piece-name {
-    font-size: 24px;
+    font-size: 22px;
     font-weight: bold;
     color: #fff;
 }
