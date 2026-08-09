@@ -26,6 +26,12 @@
             <div id="list-container" style="display: none;"></div>
         </div>
 
+        <!-- 文字输入走棋（华为浏览器等不支持语音时使用） -->
+        <div id="input-bar">
+            <input type="text" id="move-input" placeholder="输入棋谱，如：炮二平五" autocomplete="off">
+            <button id="btn-send" aria-label="发送棋谱">走棋</button>
+        </div>
+
         <!-- 工具栏 -->
         <div id="toolbar">
             <button class="tool-btn" id="btn-new" aria-label="新局">
