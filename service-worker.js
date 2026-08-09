@@ -1,4 +1,4 @@
-const CACHE_NAME = 'chinese-chess-v2';
+const CACHE_NAME = 'chinese-chess-v3';
 const urlsToCache = [
     '/',
     '/index.html',
@@ -26,9 +26,9 @@ self.addEventListener('fetch', event => {
         caches.match(event.request)
             .then(response => {
                 if (response) {
-                    return response; // 使用缓存
+                    return response;
                 }
-                return fetch(event.request); // 否则从网络获取
+                return fetch(event.request);
             })
     );
 });
