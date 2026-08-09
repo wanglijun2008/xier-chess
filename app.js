@@ -11,7 +11,7 @@
         rows: 10,
         cols: 9,
         padding: 30,
-        cellSize: 0 // 动态计算
+        cellSize: 0
     };
 
     // 触摸状态
@@ -21,6 +21,7 @@
     // 语音合成
     const synth = window.speechSynthesis;
     let currentUtterance = null;
+    let lastSpokenMessage = '西尔象棋盲棋已启动，红方先行'; // 修复：追踪最后播报内容
 
     // ========== 功能1：游戏模式 ==========
     let gameMode = 'pvp'; // 'pvp' 或 'pve'
@@ -28,6 +29,7 @@
     // ========== 功能2：语音识别 ==========
     let recognition = null;
     let isListening = false;
+    let voiceContinuous = false; // 连续语音模式
 
     // ========== 功能3：列表模式 ==========
     let listMode = false;
@@ -105,6 +107,24 @@
         osc.stop(audioContext.currentTime + 0.3);
     }
 
+    function playWinSound() {
+        initAudioContext();
+        // 胜利音效：三个上升音符
+        [523, 659, 784].forEach(function(freq, i) {
+            const osc = audioContext.createOscillator();
+            const gain = audioContext.createGain();
+            osc.connect(gain);
+            gain.connect(audioContext.destination);
+            osc.frequency.value = freq;
+            osc.type = 'sine';
+            const startTime = audioContext.currentTime + i * 0.15;
+            gain.gain.setValueAtTime(0.3, startTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, startTime + 0.3);
+            osc.start(startTime);
+            osc.stop(startTime + 0.3);
+        });
+    }
+
     // 初始化
     function init() {
         resizeCanvas();
@@ -119,12 +139,12 @@
         const container = document.getElementById('board-container');
         const maxWidth = container.clientWidth - 20;
         const maxHeight = container.clientHeight - 20;
-        
+
         const cellSize = Math.min(
             (maxWidth - BOARD_CONFIG.padding * 2) / (BOARD_CONFIG.cols - 1),
             (maxHeight - BOARD_CONFIG.padding * 2) / (BOARD_CONFIG.rows - 1)
         );
-        
+
         BOARD_CONFIG.cellSize = cellSize;
         canvas.width = cellSize * (BOARD_CONFIG.cols - 1) + BOARD_CONFIG.padding * 2;
         canvas.height = cellSize * (BOARD_CONFIG.rows - 1) + BOARD_CONFIG.padding * 2;
@@ -133,12 +153,10 @@
     // 绘制棋盘
     function drawBoard() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
-        // 背景
+
         ctx.fillStyle = '#2d2d2d';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        // 画线
         ctx.strokeStyle = '#666';
         ctx.lineWidth = 1;
 
@@ -155,18 +173,16 @@
         // 竖线
         for (let i = 0; i < BOARD_CONFIG.cols; i++) {
             if (i === 0 || i === BOARD_CONFIG.cols - 1) {
-                // 边线贯穿
                 ctx.beginPath();
                 ctx.moveTo(padding + i * cellSize, padding);
                 ctx.lineTo(padding + i * cellSize, padding + (BOARD_CONFIG.rows - 1) * cellSize);
                 ctx.stroke();
             } else {
-                // 中间线断开
                 ctx.beginPath();
                 ctx.moveTo(padding + i * cellSize, padding);
                 ctx.lineTo(padding + i * cellSize, padding + 4 * cellSize);
                 ctx.stroke();
-                
+
                 ctx.beginPath();
                 ctx.moveTo(padding + i * cellSize, padding + 5 * cellSize);
                 ctx.lineTo(padding + i * cellSize, padding + (BOARD_CONFIG.rows - 1) * cellSize);
@@ -196,12 +212,21 @@
         ctx.fillText('楚 河', padding + 2 * cellSize, padding + 4.5 * cellSize);
         ctx.fillText('汉 界', padding + 6 * cellSize, padding + 4.5 * cellSize);
 
-        // 画棋子
         drawPieces();
 
-        // 画选中高亮
         if (selectedPos) {
             drawSelection(selectedPos.row, selectedPos.col);
+        }
+
+        // 游戏结束时显示半透明遮罩
+        if (game.gameOver) {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#FFD700';
+            ctx.font = 'bold 28px serif';
+            ctx.textAlign = 'center';
+            const winnerText = game.winner === 'red' ? '红方获胜！' : '黑方获胜！';
+            ctx.fillText(winnerText, canvas.width / 2, canvas.height / 2);
         }
     }
 
@@ -225,18 +250,15 @@
     function drawPiece(x, y, piece) {
         const radius = BOARD_CONFIG.cellSize * 0.4;
 
-        // 棋子底色
         ctx.beginPath();
         ctx.arc(x, y, radius, 0, Math.PI * 2);
         ctx.fillStyle = piece.color === 'red' ? '#8b0000' : '#1a1a1a';
         ctx.fill();
 
-        // 棋子边框
         ctx.strokeStyle = piece.color === 'red' ? '#ff6b6b' : '#666';
         ctx.lineWidth = 2;
         ctx.stroke();
 
-        // 棋子文字
         ctx.fillStyle = piece.color === 'red' ? '#fff' : '#ccc';
         ctx.font = 'bold 18px serif';
         ctx.textAlign = 'center';
@@ -258,7 +280,7 @@
         ctx.stroke();
     }
 
-    // 坐标转换：屏幕坐标 -> 棋盘坐标
+    // 坐标转换
     function screenToBoard(x, y) {
         const rect = canvas.getBoundingClientRect();
         const canvasX = x - rect.left;
@@ -297,14 +319,12 @@
         const distance = Math.sqrt(dx * dx + dy * dy);
         const duration = Date.now() - touchStart.time;
 
-        // 点击（短距离、短时间）
         if (distance < 10 && duration < 300) {
             const pos = screenToBoard(touchStart.x, touchStart.y);
             if (pos) {
                 handleTap(pos.row, pos.col);
             }
         }
-        // 滑动（长距离）
         else if (distance > 30 && selectedPos) {
             handleSwipe(dx, dy);
         }
@@ -314,30 +334,23 @@
 
     // 处理点击
     function handleTap(row, col) {
+        // 游戏结束后不允许操作
+        if (game.gameOver) {
+            speak('游戏已结束，请点击新局重新开始');
+            return;
+        }
+
         const piece = game.getPiece(row, col);
 
-        // 如果已有选中棋子，尝试走棋
         if (selectedPos) {
             const result = game.movePiece(row, col);
             if (result.success) {
-                // 播放音效
-                if (result.message.includes('吃掉')) {
-                    playCaptureSound();
-                } else {
-                    playMoveSound();
-                }
+                handleMoveResult(result);
 
-                speak(result.message);
-                selectedPos = null;
-                updateStatus();
-                drawBoard();
-
-                // 检查将军
-                if (game.isInCheck(game.currentPlayer)) {
-                    setTimeout(() => {
-                        playCheckSound();
-                        speak('将军');
-                    }, 1500);
+                // ========== 关键修复：处理游戏结束 ==========
+                if (result.gameOver) {
+                    handleGameOver(result.winner);
+                    return;
                 }
 
                 // AI 走棋
@@ -345,7 +358,6 @@
                     setTimeout(triggerAIMove, 500);
                 }
             } else {
-                // 如果目标位置有自己的棋子，切换选中
                 if (piece && piece.color === game.currentPlayer) {
                     selectPieceAt(row, col);
                 } else {
@@ -354,7 +366,6 @@
                 }
             }
         }
-        // 否则选中棋子
         else if (piece && piece.color === game.currentPlayer) {
             selectPieceAt(row, col);
         }
@@ -374,45 +385,27 @@
 
     // 处理滑动
     function handleSwipe(dx, dy) {
-        if (!selectedPos) return;
+        if (!selectedPos || game.gameOver) return;
 
         const { row, col } = selectedPos;
         let targetRow = row;
         let targetCol = col;
 
-        // 判断滑动方向
         if (Math.abs(dx) > Math.abs(dy)) {
-            // 水平滑动
             targetCol = col + (dx > 0 ? 1 : -1);
         } else {
-            // 垂直滑动
             targetRow = row + (dy > 0 ? 1 : -1);
         }
 
-        // 尝试移动
         const result = game.movePiece(targetRow, targetCol);
         if (result.success) {
-            // 播放音效
-            if (result.message.includes('吃掉')) {
-                playCaptureSound();
-            } else {
-                playMoveSound();
+            handleMoveResult(result);
+
+            if (result.gameOver) {
+                handleGameOver(result.winner);
+                return;
             }
 
-            speak(result.message);
-            selectedPos = null;
-            updateStatus();
-            drawBoard();
-
-            // 检查将军
-            if (game.isInCheck(game.currentPlayer)) {
-                setTimeout(() => {
-                    playCheckSound();
-                    speak('将军');
-                }, 1500);
-            }
-
-            // AI 走棋
             if (gameMode === 'pve' && game.currentPlayer === 'black') {
                 setTimeout(triggerAIMove, 500);
             }
@@ -420,6 +413,39 @@
             playErrorSound();
             speak('不能这样走');
         }
+    }
+
+    // ========== 统一处理走棋结果 ==========
+    function handleMoveResult(result) {
+        if (result.message.includes('吃掉')) {
+            playCaptureSound();
+        } else {
+            playMoveSound();
+        }
+
+        speak(result.message);
+        lastSpokenMessage = result.message; // 修复：更新最后播报内容
+        selectedPos = null;
+        updateStatus();
+        drawBoard();
+    }
+
+    // ========== 关键修复：处理游戏结束 ==========
+    function handleGameOver(winner) {
+        const winnerName = winner === 'red' ? '红方' : '黑方';
+        updateStatus();
+        drawBoard();
+
+        setTimeout(function() {
+            playWinSound();
+            speak(winnerName + '获胜！游戏结束。点击新局可重新开始。');
+            lastSpokenMessage = winnerName + '获胜！游戏结束。';
+
+            // 停止语音识别
+            if (isListening) {
+                stopVoiceRecognition();
+            }
+        }, 1000);
     }
 
     // 语音播报
@@ -437,35 +463,34 @@
 
     // 更新状态栏
     function updateStatus() {
-        document.getElementById('turn-info').textContent = 
-            game.currentPlayer === 'red' ? '红方走棋' : '黑方走棋';
-        document.getElementById('round-info').textContent = `第 ${game.round} 回合`;
+        const turnEl = document.getElementById('turn-info');
+        if (game.gameOver) {
+            const winnerName = game.winner === 'red' ? '红方' : '黑方';
+            turnEl.textContent = winnerName + '获胜！';
+            turnEl.style.color = '#FFD700';
+        } else {
+            turnEl.textContent = game.currentPlayer === 'red' ? '红方走棋' : '黑方走棋';
+            turnEl.style.color = '#ff6b6b';
+        }
+        document.getElementById('round-info').textContent = '第 ' + game.round + ' 回合';
     }
 
     // 设置事件监听
     function setupEventListeners() {
-        // 触摸事件
         canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
         canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
 
-        // 工具栏按钮
         document.getElementById('btn-new').addEventListener('click', newGame);
         document.getElementById('btn-undo').addEventListener('click', undoMove);
         document.getElementById('btn-speak').addEventListener('click', speakBoard);
         document.getElementById('btn-repeat').addEventListener('click', repeatLast);
         document.getElementById('btn-help').addEventListener('click', showHelp);
 
-        // 功能1：模式切换
         document.getElementById('btn-mode').addEventListener('click', toggleMode);
-
-        // 功能2：语音指令
         document.getElementById('btn-voice').addEventListener('click', toggleVoice);
-
-        // 功能3：列表模式
         document.getElementById('btn-list').addEventListener('click', toggleListMode);
 
-        // 窗口大小变化
-        window.addEventListener('resize', () => {
+        window.addEventListener('resize', function() {
             resizeCanvas();
             drawBoard();
         });
@@ -473,17 +498,17 @@
 
     // 新局
     function newGame() {
-        if (confirm('确定要开始新局吗？')) {
-            game.board = game.initBoard();
-            game.currentPlayer = 'red';
-            game.selectedPiece = null;
-            game.moveHistory = [];
-            game.round = 1;
-            selectedPos = null;
-            updateStatus();
-            drawBoard();
-            speak('新局开始，红方先行');
-        }
+        game.board = game.initBoard();
+        game.currentPlayer = 'red';
+        game.selectedPiece = null;
+        game.moveHistory = [];
+        game.round = 1;
+        game.resetState(); // 重置游戏结束状态
+        selectedPos = null;
+        updateStatus();
+        drawBoard();
+        speak('新局开始，红方先行');
+        lastSpokenMessage = '新局开始，红方先行';
     }
 
     // 悔棋
@@ -494,6 +519,7 @@
             updateStatus();
             drawBoard();
             speak(result.message);
+            lastSpokenMessage = result.message;
         } else {
             speak(result.message);
         }
@@ -501,19 +527,21 @@
 
     // 播报局面
     function speakBoard() {
-        speak(game.describeBoard());
+        const desc = game.describeBoard();
+        speak(desc);
+        lastSpokenMessage = desc;
     }
 
-    // 重复播报
-    let lastMessage = '西尔象棋盲棋已启动';
+    // ========== 修复：重复播报使用追踪的最后消息 ==========
     function repeatLast() {
-        speak(lastMessage);
+        speak(lastSpokenMessage);
     }
 
     // 帮助
     function showHelp() {
-        const help = '操作说明：点击棋子选中，滑动走棋。底部按钮：新局、悔棋、播报、重复、模式切换、语音指令、列表模式、帮助。';
+        const help = '操作说明：点击棋子选中，滑动走棋。语音指令：点击语音按钮后说棋谱，如炮二平五。底部按钮：新局、悔棋、播报、重复、模式切换、语音指令、列表模式、帮助。';
         speak(help);
+        lastSpokenMessage = help;
     }
 
     // ========== 功能1：AI 对弈 ==========
@@ -527,13 +555,14 @@
             document.querySelector('#btn-mode .label').textContent = '双人';
             speak('已切换到双人对弈模式');
         }
+        lastSpokenMessage = gameMode === 'pve' ? '人机对弈模式' : '双人对弈模式';
     }
 
     function triggerAIMove() {
-        if (gameMode !== 'pve' || game.currentPlayer !== 'black') return;
+        if (gameMode !== 'pve' || game.currentPlayer !== 'black' || game.gameOver) return;
 
         speak('AI思考中');
-        setTimeout(() => {
+        setTimeout(function() {
             const bestMove = game.getBestMove('black');
             if (bestMove) {
                 const result = game.movePieceByCoords(
@@ -541,20 +570,11 @@
                     bestMove.toRow, bestMove.toCol
                 );
                 if (result.success) {
-                    if (result.message.includes('吃掉')) {
-                        playCaptureSound();
-                    } else {
-                        playMoveSound();
-                    }
-                    speak(result.message);
-                    updateStatus();
-                    drawBoard();
+                    handleMoveResult(result);
 
-                    if (game.isInCheck(game.currentPlayer)) {
-                        setTimeout(() => {
-                            playCheckSound();
-                            speak('将军');
-                        }, 1500);
+                    if (result.gameOver) {
+                        handleGameOver(result.winner);
+                        return;
                     }
                 }
             }
@@ -562,6 +582,7 @@
     }
 
     // ========== 功能2：语音指令识别 ==========
+    // ========== 修复：支持连续语音模式，盲人可持续下棋 ==========
     function toggleVoice() {
         if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
             speak('您的浏览器不支持语音识别');
@@ -571,6 +592,8 @@
         if (isListening) {
             stopVoiceRecognition();
         } else {
+            // 默认开启连续模式
+            voiceContinuous = true;
             startVoiceRecognition();
         }
     }
@@ -579,16 +602,21 @@
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         recognition = new SpeechRecognition();
         recognition.lang = 'zh-CN';
-        recognition.continuous = false;
+        recognition.continuous = voiceContinuous; // 连续模式
         recognition.interimResults = false;
 
-        recognition.onstart = () => {
+        recognition.onstart = function() {
             isListening = true;
             document.querySelector('#btn-voice .label').textContent = '监听';
-            speak('请说出棋谱，例如炮二平五');
+            document.querySelector('#btn-voice').style.borderColor = '#4CAF50';
+            if (!voiceContinuous) {
+                speak('请说出棋谱，例如炮二平五');
+            } else {
+                speak('语音指令已开启，请说出棋谱。例如炮二平五。说完一句后会自动继续监听。');
+            }
         };
 
-        recognition.onresult = (event) => {
+        recognition.onresult = function(event) {
             const transcript = event.results[0][0].transcript;
             speak('识别到：' + transcript);
 
@@ -598,21 +626,14 @@
                 if (move) {
                     const result = game.movePieceByCoords(move.fromRow, move.fromCol, move.toRow, move.toCol);
                     if (result.success) {
-                        if (result.message.includes('吃掉')) {
-                            playCaptureSound();
-                        } else {
-                            playMoveSound();
-                        }
-                        speak(result.message);
-                        selectedPos = null;
-                        updateStatus();
-                        drawBoard();
+                        handleMoveResult(result);
 
-                        if (game.isInCheck(game.currentPlayer)) {
-                            setTimeout(() => {
-                                playCheckSound();
-                                speak('将军');
-                            }, 1500);
+                        if (result.gameOver) {
+                            handleGameOver(result.winner);
+                            if (voiceContinuous) {
+                                stopVoiceRecognition();
+                            }
+                            return;
                         }
 
                         if (gameMode === 'pve' && game.currentPlayer === 'black') {
@@ -624,24 +645,41 @@
                     }
                 } else {
                     playErrorSound();
-                    speak('无法解析目标位置');
+                    speak('无法解析目标位置，请重新说棋谱');
                 }
             } else {
                 playErrorSound();
-                speak('无法识别棋谱格式');
+                speak('无法识别棋谱格式，请说如炮二平五');
             }
         };
 
-        recognition.onerror = (event) => {
-            speak('语音识别错误：' + event.error);
-            stopVoiceRecognition();
+        recognition.onerror = function(event) {
+            if (event.error !== 'no-speech' && event.error !== 'aborted') {
+                speak('语音识别错误：' + event.error);
+            }
+            if (!voiceContinuous) {
+                stopVoiceRecognition();
+            }
         };
 
-        recognition.onend = () => {
-            stopVoiceRecognition();
+        recognition.onend = function() {
+            // 连续模式下自动重启
+            if (voiceContinuous && isListening && !game.gameOver) {
+                try {
+                    recognition.start();
+                } catch (e) {
+                    // 防止重复启动
+                }
+            } else {
+                stopVoiceRecognition();
+            }
         };
 
-        recognition.start();
+        try {
+            recognition.start();
+        } catch (e) {
+            speak('语音识别启动失败');
+        }
     }
 
     function stopVoiceRecognition() {
@@ -650,10 +688,13 @@
             recognition = null;
         }
         isListening = false;
+        voiceContinuous = false;
         document.querySelector('#btn-voice .label').textContent = '语音';
+        document.querySelector('#btn-voice').style.borderColor = '#555';
     }
 
     // ========== 功能3：棋子列表模式 ==========
+    // ========== 修复：显示双方所有棋子，盲人可了解全局 ==========
     function toggleListMode() {
         listMode = !listMode;
         const listContainer = document.getElementById('list-container');
@@ -663,7 +704,7 @@
             canvas.style.display = 'none';
             listContainer.style.display = 'block';
             initListMode();
-            speak('已进入列表模式');
+            speak('已进入列表模式，显示双方所有棋子');
         } else {
             document.querySelector('#btn-list .label').textContent = '列表';
             listContainer.style.display = 'none';
@@ -673,26 +714,29 @@
     }
 
     function initListMode() {
-        listPieces = game.getPiecesByColor(game.currentPlayer);
+        // 获取双方所有棋子
+        listPieces = game.getAllPieces();
         listSelectedIndex = -1;
         renderList();
     }
 
     function renderList() {
         const listContainer = document.getElementById('list-container');
-        let html = '<div class="list-header">' + (game.currentPlayer === 'red' ? '红方' : '黑方') + '棋子列表</div>';
+        let html = '<div class="list-header">棋盘全部棋子</div>';
         html += '<div class="list-grid">';
 
         listPieces.forEach(function(item, index) {
-            var cls = 'list-piece' + (index === listSelectedIndex ? ' selected' : '');
+            var colorClass = item.piece.color === 'red' ? 'red-piece' : 'black-piece';
+            var cls = 'list-piece ' + colorClass + (index === listSelectedIndex ? ' selected' : '');
+            var sideName = item.piece.color === 'red' ? '红' : '黑';
             html += '<div class="' + cls + '" data-index="' + index + '">';
-            html += '<div class="piece-name">' + item.piece.name + '</div>';
+            html += '<div class="piece-name">' + sideName + item.piece.name + '</div>';
             html += '<div class="piece-pos">' + game.getColumnName(item.col, item.piece.color) + '路' + game.getRowName(item.row) + '线</div>';
             html += '</div>';
         });
 
         html += '</div>';
-        html += '<p class="list-hint">点击棋子选中，然后滑动选择目标位置</p>';
+        html += '<p class="list-hint">点击棋子播报位置，滑动走棋</p>';
 
         listContainer.innerHTML = html;
     }
@@ -702,6 +746,7 @@
         var item = listPieces[index];
         var desc = game.describePiece(item.row, item.col, item.piece);
         speak(desc);
+        lastSpokenMessage = desc;
         renderList();
     }
 
@@ -735,6 +780,14 @@
 
             if (distance > 30) {
                 var item = listPieces[listSelectedIndex];
+                // 只能走当前方的棋子
+                if (item.piece.color !== game.currentPlayer) {
+                    playErrorSound();
+                    speak('只能走' + (game.currentPlayer === 'red' ? '红方' : '黑方') + '的棋子');
+                    listTouchStart = null;
+                    return;
+                }
+
                 var targetRow = item.row;
                 var targetCol = item.col;
 
@@ -746,12 +799,14 @@
 
                 var result = game.movePieceByCoords(item.row, item.col, targetRow, targetCol);
                 if (result.success) {
-                    if (result.message.includes('吃掉')) {
-                        playCaptureSound();
-                    } else {
-                        playMoveSound();
+                    handleMoveResult(result);
+
+                    if (result.gameOver) {
+                        handleGameOver(result.winner);
+                        listTouchStart = null;
+                        return;
                     }
-                    speak(result.message);
+
                     listSelectedIndex = -1;
                     updateStatus();
 
@@ -759,13 +814,6 @@
                         initListMode();
                     } else {
                         drawBoard();
-                    }
-
-                    if (game.isInCheck(game.currentPlayer)) {
-                        setTimeout(function() {
-                            playCheckSound();
-                            speak('将军');
-                        }, 1500);
                     }
 
                     if (gameMode === 'pve' && game.currentPlayer === 'black') {
