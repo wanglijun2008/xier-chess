@@ -510,10 +510,64 @@
         document.getElementById('btn-voice').addEventListener('click', toggleVoice);
         document.getElementById('btn-list').addEventListener('click', toggleListMode);
 
+        // 文字输入走棋
+        var moveInput = document.getElementById('move-input');
+        var btnSend = document.getElementById('btn-send');
+        btnSend.addEventListener('click', handleTextInput);
+        moveInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                handleTextInput();
+            }
+        });
+
         window.addEventListener('resize', function() {
             resizeCanvas();
             drawBoard();
         });
+    }
+
+    // 文字输入走棋处理
+    function handleTextInput() {
+        var input = document.getElementById('move-input');
+        var text = input.value.trim();
+        if (!text) return;
+
+        if (game.gameOver) {
+            showMessage('游戏已结束，请点击新局重新开始', 3000);
+            input.value = '';
+            return;
+        }
+
+        var cmd = game.parseVoiceCommand(text);
+        if (cmd) {
+            var move = game.resolveVoiceMove(cmd);
+            if (move) {
+                var result = game.movePieceByCoords(move.fromRow, move.fromCol, move.toRow, move.toCol);
+                if (result.success) {
+                    handleMoveResult(result);
+                    input.value = '';
+
+                    if (result.gameOver) {
+                        handleGameOver(result.winner);
+                        return;
+                    }
+
+                    if (gameMode === 'pve' && game.currentPlayer === 'black') {
+                        setTimeout(triggerAIMove, 500);
+                    }
+                } else {
+                    playErrorSound();
+                    showMessage(result.message, 3000);
+                }
+            } else {
+                playErrorSound();
+                showMessage('无法解析目标位置，请检查棋谱格式', 3000);
+            }
+        } else {
+            playErrorSound();
+            showMessage('无法识别棋谱，请输入如：炮二平五', 3000);
+        }
     }
 
     // 新局
