@@ -388,27 +388,31 @@ class ChineseChess {
         return null;
     }
 
-    // ========== 统一坐标系：列1-9(右→左)，行0-9(下→上) ==========
+    // ========== 统一坐标系：每方以自己的右下角为基准 ==========
+    // 列：1-9（从自己的右向左），行：0-9（从自己向对方）
+    // 红方在棋盘下方：内部(行9,列8)=红方右下角 → 用户(行0,列1)
+    // 黑方在棋盘上方：内部(行0,列0)=黑方右下角 → 用户(行0,列1)
     // 内部坐标 → 用户坐标
-    internalToUserCol(col) { return 9 - col; }  // 内部0-8 → 用户9-1
-    internalToUserRow(row) { return 9 - row; }  // 内部0-9 → 用户9-0
+    internalToUserCol(col, color) { return color === 'red' ? 9 - col : col + 1; }
+    internalToUserRow(row, color) { return color === 'red' ? 9 - row : row; }
     // 用户坐标 → 内部坐标
-    userToInternalCol(uCol) { return 9 - uCol; }
-    userToInternalRow(uRow) { return 9 - uRow; }
+    userToInternalCol(uCol, color) { return color === 'red' ? 9 - uCol : uCol - 1; }
+    userToInternalRow(uRow, color) { return color === 'red' ? 9 - uRow : uRow; }
 
     describePiece(row, col, piece) {
-        const uCol = this.internalToUserCol(col);
-        const uRow = this.internalToUserRow(row);
+        const uCol = this.internalToUserCol(col, piece.color);
+        const uRow = this.internalToUserRow(row, piece.color);
         return `${piece.color === 'red' ? '红方' : '黑方'}${piece.name}，第${uCol}列第${uRow}行`;
     }
 
     describeMove(fromRow, fromCol, toRow, toCol, piece) {
-        const uFromCol = this.internalToUserCol(fromCol);
-        const uToCol = this.internalToUserCol(toCol);
+        const color = piece.color;
+        const uFromCol = this.internalToUserCol(fromCol, color);
+        const uToCol = this.internalToUserCol(toCol, color);
 
         let action = '';
-        const isForward = (piece.color === 'red' && toRow < fromRow) ||
-                          (piece.color === 'black' && toRow > fromRow);
+        const isForward = (color === 'red' && toRow < fromRow) ||
+                          (color === 'black' && toRow > fromRow);
         if (fromRow === toRow) {
             action = '平';
         } else if (isForward) {
@@ -422,7 +426,7 @@ class ChineseChess {
             target = uToCol;
         } else if (piece.type === 'rook' || piece.type === 'cannon' || piece.type === 'king') {
             // 直线棋子：进/退N步
-            target = Math.abs(this.internalToUserRow(toRow) - this.internalToUserRow(fromRow));
+            target = Math.abs(toRow - fromRow);
         } else {
             // 斜线/日字棋子：进/退到第N列
             target = uToCol;
@@ -431,7 +435,7 @@ class ChineseChess {
         return `${piece.name}${uFromCol}${action}${target}`;
     }
 
-    // ========== 统一坐标系：扫描全部棋盘 ==========
+    // ========== 统一坐标系：扫描全部棋盘（各用己方坐标播报） ==========
     describeBoard() {
         let desc = `${this.currentPlayer === 'red' ? '红方' : '黑方'}走棋。第${this.round}回合。`;
 
@@ -441,7 +445,7 @@ class ChineseChess {
             for (let c = 0; c < 9; c++) {
                 const piece = this.getPiece(r, c);
                 if (piece && piece.color === 'red') {
-                    redPieces.push(`${piece.name}${this.internalToUserCol(c)}${this.internalToUserRow(r)}`);
+                    redPieces.push(`${piece.name}${this.internalToUserCol(c, 'red')}${this.internalToUserRow(r, 'red')}`);
                 }
             }
         }
@@ -453,7 +457,7 @@ class ChineseChess {
             for (let c = 0; c < 9; c++) {
                 const piece = this.getPiece(r, c);
                 if (piece && piece.color === 'black') {
-                    blackPieces.push(`${piece.name}${this.internalToUserCol(c)}${this.internalToUserRow(r)}`);
+                    blackPieces.push(`${piece.name}${this.internalToUserCol(c, 'black')}${this.internalToUserRow(r, 'black')}`);
                 }
             }
         }
@@ -462,15 +466,42 @@ class ChineseChess {
         return desc;
     }
 
-    // ========== 统一坐标系语音指令解析 ==========
-    // 格式：炮2平5 / 马8进7 / 车1进3 / 兵5进1
-    // 列：1-9（右→左），行：0-9（下→上），双方共用
+    // ========== 统一坐标系棋谱解析（语音与文字输入共用） ==========
+    // 格式：炮2平5 / 炮二平五 / 马8进7 / 前车2进3
+    // 列1-9从自己的右向左，行0-9从自己向对方，双方各以自己右下角为基准
+
+    // 规范化输入文本：全角转半角、中文数字转阿拉伯数字、同音字纠正、去标点空格
+    normalizeCommandText(text) {
+        if (!text) return '';
+        let t = String(text);
+        t = t.replace(/[０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0));
+        const cnNums = { '零': '0', '〇': '0', '一': '1', '二': '2', '两': '2', '三': '3', '四': '4', '五': '5', '六': '6', '七': '7', '八': '8', '九': '9' };
+        t = t.replace(/[零〇一二两三四五六七八九]/g, ch => cnNums[ch]);
+        // 语音识别常见同音字（相/象、仕/士等互通由 isSamePieceName 处理）
+        t = t.replace(/跑/g, '炮').replace(/像/g, '象');
+        t = t.replace(/[，。、,.！!？?；;:：\u2018\u2019\u201C\u201D'"（）()\s]/g, '');
+        return t.trim();
+    }
+
+    // 棋子名别名组：帅/将、仕/士、相/象、兵/卒 互相通用
+    isSamePieceName(a, b) {
+        if (a === b) return true;
+        const groups = [['帅', '将'], ['仕', '士'], ['相', '象'], ['兵', '卒']];
+        return groups.some(g => g.indexOf(a) >= 0 && g.indexOf(b) >= 0);
+    }
+
     parseVoiceCommand(text) {
+        text = this.normalizeCommandText(text);
         if (!text) return null;
-        text = text.trim();
 
         const pieceNames = ['帅', '将', '仕', '士', '相', '象', '马', '车', '炮', '兵', '卒'];
-        const actionChars = ['进', '退', '平'];
+
+        // 可选的前/中/后限定（同列多个相同棋子时使用，如"前车2进3"）
+        let qualifier = null;
+        if (/^[前后中]/.test(text)) {
+            qualifier = text[0];
+            text = text.substring(1);
+        }
 
         // 提取棋子名
         let pieceName = null;
@@ -483,7 +514,7 @@ class ChineseChess {
         let rest = text.substring(pieceName.length);
         const colMatch = rest.match(/^([1-9])/);
         if (!colMatch) return null;
-        const fromUserCol = parseInt(colMatch[1]); // 用户列 1-9
+        const fromUserCol = parseInt(colMatch[1], 10);
 
         // 提取动作
         rest = rest.substring(1);
@@ -491,103 +522,103 @@ class ChineseChess {
         if (!actionMatch) return null;
         const action = actionMatch[1];
 
-        // 提取目标
-        const targetStr = rest.substring(1).trim();
-        if (!targetStr) return null;
+        // 提取目标数字（第一位，忽略其余尾缀）
+        const targetStr = rest.substring(1);
+        if (!/^[0-9]/.test(targetStr)) return null;
 
-        return { pieceName, fromUserCol, action, target: targetStr };
+        return { pieceName, fromUserCol, action, target: targetStr[0], qualifier };
     }
 
-    // 根据统一坐标系解析目标位置
+    // 解析棋谱目标位置
+    // 返回 { fromRow, fromCol, toRow, toCol }；歧义返回 { ambiguous: true }；无法解析返回 null
     resolveVoiceMove(cmd) {
         if (!cmd) return null;
         const color = this.currentPlayer;
+        const fromCol = this.userToInternalCol(cmd.fromUserCol, color);
+        if (fromCol < 0 || fromCol > 8) return null;
 
-        // 用户列 → 内部列
-        const fromInternalCol = this.userToInternalCol(cmd.fromUserCol);
-
-        // 找到当前方在该列的对应棋子
-        let piecePos = null;
-        let piece = null;
+        // 找到当前方在该列的所有同名棋子（可能多个，如双车同列、叠兵）
+        const candidates = [];
         for (let r = 0; r < 10; r++) {
-            const p = this.getPiece(r, fromInternalCol);
-            if (p && p.name === cmd.pieceName && p.color === color) {
-                piecePos = { row: r, col: fromInternalCol };
-                piece = p;
-                break;
+            const p = this.getPiece(r, fromCol);
+            if (p && p.color === color && this.isSamePieceName(p.name, cmd.pieceName)) {
+                candidates.push({ row: r, col: fromCol, piece: p });
             }
         }
-        if (!piecePos) return null;
+        if (candidates.length === 0) return null;
 
-        const { row: fromRow, col: fromCol } = piecePos;
-        let toRow = fromRow, toCol = fromCol;
-        const targetNum = parseInt(cmd.target);
+        // 有前/中/后限定时直接锁定棋子
+        let pool = candidates;
+        if (candidates.length > 1 && cmd.qualifier) {
+            // 越靠近对方越"前"：红方行号小为前，黑方行号大为前
+            const sorted = candidates.slice().sort((a, b) => color === 'red' ? a.row - b.row : b.row - a.row);
+            if (cmd.qualifier === '前') pool = [sorted[0]];
+            else if (cmd.qualifier === '后') pool = [sorted[sorted.length - 1]];
+            else pool = sorted.length >= 3 ? [sorted[1]] : [sorted[Math.floor(sorted.length / 2)]];
+        }
 
-        if (cmd.action === '平') {
-            // 平：目标列（用户坐标1-9）
-            if (isNaN(targetNum) || targetNum < 1 || targetNum > 9) return null;
-            toCol = this.userToInternalCol(targetNum);
-            toRow = fromRow;
-        } else if (cmd.action === '进') {
-            if (piece.type === 'rook' || piece.type === 'cannon' || piece.type === 'king') {
-                // 直线棋子：进N步（朝对方方向）
-                if (isNaN(targetNum) || targetNum < 1 || targetNum > 9) return null;
-                if (color === 'red') {
-                    toRow = fromRow - targetNum; // 红方向上（内部行减小）
-                } else {
-                    toRow = fromRow + targetNum; // 黑方向下（内部行增大）
-                }
-                toCol = fromCol;
-            } else {
-                // 斜线/日字棋子：进到第N列（用户坐标）
-                if (isNaN(targetNum) || targetNum < 1 || targetNum > 9) return null;
-                toCol = this.userToInternalCol(targetNum);
-                const dc = Math.abs(toCol - fromCol);
-                let dr;
-                if (piece.type === 'horse') {
-                    dr = (dc === 2) ? 1 : 2;
-                } else if (piece.type === 'elephant') {
-                    dr = 2;
-                } else {
-                    dr = 1; // advisor, pawn
-                }
-                if (color === 'red') {
-                    toRow = fromRow - dr; // 红方向上
-                } else {
-                    toRow = fromRow + dr; // 黑方向下
-                }
-            }
-        } else if (cmd.action === '退') {
-            if (piece.type === 'rook' || piece.type === 'cannon' || piece.type === 'king') {
-                // 直线棋子：退N步（远离对方方向）
-                if (isNaN(targetNum) || targetNum < 1 || targetNum > 9) return null;
-                if (color === 'red') {
-                    toRow = fromRow + targetNum; // 红方向下
-                } else {
-                    toRow = fromRow - targetNum; // 黑方向上
-                }
-                toCol = fromCol;
-            } else {
-                // 斜线/日字棋子：退到第N列
-                if (isNaN(targetNum) || targetNum < 1 || targetNum > 9) return null;
-                toCol = this.userToInternalCol(targetNum);
-                const dc = Math.abs(toCol - fromCol);
-                let dr;
-                if (piece.type === 'horse') {
-                    dr = (dc === 2) ? 1 : 2;
-                } else {
-                    dr = 1; // advisor
-                }
-                if (color === 'red') {
-                    toRow = fromRow + dr; // 红方向下
-                } else {
-                    toRow = fromRow - dr; // 黑方向上
-                }
+        const targetNum = parseInt(cmd.target, 10);
+        const legalMoves = [];
+        for (const cand of pool) {
+            const to = this.resolveTargetSquare(cand, cmd.action, targetNum, color);
+            if (!to) continue;
+            if (to.row < 0 || to.row >= 10 || to.col < 0 || to.col >= 9) continue;
+            if (this.isValidMove(cand.row, cand.col, to.row, to.col, cand.piece) &&
+                !this.wouldBeInCheck(cand.row, cand.col, to.row, to.col, color)) {
+                legalMoves.push({ fromRow: cand.row, fromCol: cand.col, toRow: to.row, toCol: to.col });
             }
         }
 
-        if (toRow < 0 || toRow >= 10 || toCol < 0 || toCol >= 9) return null;
-        return { fromRow, fromCol, toRow, toCol };
+        if (legalMoves.length === 1) return legalMoves[0];
+        if (legalMoves.length > 1) return { ambiguous: true };
+        return null;
+    }
+
+    // 根据动作与目标数计算目标格（内部坐标）
+    resolveTargetSquare(cand, action, targetNum, color) {
+        const { row, col, piece } = cand;
+        if (isNaN(targetNum)) return null;
+        // 前进方向：红方向上（内部行减小），黑方向下（内部行增大）
+        const forward = color === 'red' ? -1 : 1;
+
+        if (action === '平') {
+            // 平：目标列
+            if (targetNum < 1 || targetNum > 9) return null;
+            return { row, col: this.userToInternalCol(targetNum, color) };
+        }
+
+        const dir = action === '进' ? forward : -forward;
+
+        if (piece.type === 'rook' || piece.type === 'cannon' || piece.type === 'king') {
+            // 直线棋子：进/退N步
+            if (targetNum < 1 || targetNum > 9) return null;
+            return { row: row + dir * targetNum, col };
+        }
+
+        if (piece.type === 'pawn') {
+            // 兵/卒：只能进1步（目标数是步数），不能退；平在上面的分支处理
+            if (action === '退') return null;
+            if (targetNum !== 1) return null;
+            return { row: row + dir, col };
+        }
+
+        // 马/相(象)/仕(士)：进/退到目标列
+        if (targetNum < 1 || targetNum > 9) return null;
+        const toCol = this.userToInternalCol(targetNum, color);
+        const dc = Math.abs(toCol - col);
+        let dr;
+        if (piece.type === 'horse') {
+            if (dc === 1) dr = 2;
+            else if (dc === 2) dr = 1;
+            else return null;
+        } else if (piece.type === 'elephant') {
+            if (dc !== 2) return null;
+            dr = 2;
+        } else { // advisor
+            if (dc !== 1) return null;
+            dr = 1;
+        }
+        return { row: row + dir * dr, col: toCol };
     }
 
     // ========== 功能1：AI 引擎 ==========
