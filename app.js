@@ -542,6 +542,11 @@
         var cmd = game.parseVoiceCommand(text);
         if (cmd) {
             var move = game.resolveVoiceMove(cmd);
+            if (move && move.ambiguous) {
+                playErrorSound();
+                speak('这一列有多个相同棋子，请用前或后区分，例如前车2进3');
+                return;
+            }
             if (move) {
                 var result = game.movePieceByCoords(move.fromRow, move.fromCol, move.toRow, move.toCol);
                 if (result.success) {
@@ -558,15 +563,15 @@
                     }
                 } else {
                     playErrorSound();
-                    showMessage(result.message, 3000);
+                    speak(result.message);
                 }
             } else {
                 playErrorSound();
-                showMessage('无法解析目标位置，请检查棋谱格式', 3000);
+                speak('找不到能这样走的棋子，请检查棋谱');
             }
         } else {
             playErrorSound();
-            showMessage('无法识别棋谱，请输入如：炮2平5', 3000);
+            speak('无法识别棋谱，请输入如炮2平5或炮二平五');
         }
     }
 
@@ -613,7 +618,7 @@
 
     // 帮助
     function showHelp() {
-        const help = '操作说明：点击棋子选中，滑动走棋。输入棋谱如炮2平5（列1-9右到左）。底部按钮：新局、悔棋、播报、重复、模式、语音、列表、帮助。';
+        const help = '操作说明：点击棋子选中，滑动走棋。输入或说出棋谱，如炮2平5或炮二平五，同列有相同棋子时加前或后，如前车2进3。列号1到9从自己右边向左数，行号0到9从自己向对方数，双方各以自己的右下角为基准。底部按钮：新局、悔棋、播报、重复、模式、语音、列表、帮助。';
         speak(help);
         lastSpokenMessage = help;
     }
@@ -692,7 +697,7 @@
         };
 
         recognition.onresult = function(event) {
-            const transcript = event.results[0][0].transcript;
+            const transcript = event.results[event.results.length - 1][0].transcript;
             // 连续模式下不播报"识别到"，避免TTS抢占音频通道导致麦克风中断
             if (!voiceContinuous) {
                 speak('识别到：' + transcript);
@@ -701,7 +706,10 @@
             const cmd = game.parseVoiceCommand(transcript);
             if (cmd) {
                 const move = game.resolveVoiceMove(cmd);
-                if (move) {
+                if (move && move.ambiguous) {
+                    playErrorSound();
+                    speak('这一列有多个相同棋子，请用前或后区分，例如前车2进3');
+                } else if (move) {
                     const result = game.movePieceByCoords(move.fromRow, move.fromCol, move.toRow, move.toCol);
                     if (result.success) {
                         handleMoveResult(result);
@@ -723,11 +731,11 @@
                     }
                 } else {
                     playErrorSound();
-                    speak('无法解析目标位置，请重新说棋谱');
+                    speak('找不到能这样走的棋子，请重新说棋谱');
                 }
             } else {
                 playErrorSound();
-                speak('无法识别棋谱格式，请说如炮2平5');
+                speak('无法识别棋谱格式，请说如炮2平5或炮二平五');
             }
         };
 
@@ -829,8 +837,8 @@
             var sideName = item.piece.color === 'red' ? '红' : '黑';
             html += '<div class="' + cls + '" data-index="' + index + '">';
             html += '<div class="piece-name">' + sideName + item.piece.name + '</div>';
-            var uCol = game.internalToUserCol(item.col);
-            var uRow = game.internalToUserRow(item.row);
+            var uCol = game.internalToUserCol(item.col, item.piece.color);
+            var uRow = game.internalToUserRow(item.row, item.piece.color);
             html += '<div class="piece-pos">第' + uCol + '列第' + uRow + '行</div>';
             html += '</div>';
         });
