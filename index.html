@@ -12,23 +12,23 @@
 <body>
     <div id="app">
         <!-- 状态栏 -->
-        <div id="status-bar">
+        <div id="status-bar" aria-live="polite">
             <span id="turn-info">红方走棋</span>
             <span id="round-info">第 1 回合</span>
         </div>
 
         <!-- 可见消息区域（语音失效时也能看到提示） -->
-        <div id="message-bar"></div>
+        <div id="message-bar" role="status" aria-live="polite"></div>
 
         <!-- 棋盘区域 -->
         <div id="board-container">
-            <canvas id="board"></canvas>
+            <canvas id="board" role="img" aria-label="象棋棋盘，点击棋子选中后滑动走棋"></canvas>
             <div id="list-container" style="display: none;"></div>
         </div>
 
         <!-- 文字输入走棋（华为浏览器等不支持语音时使用） -->
         <div id="input-bar">
-            <input type="text" id="move-input" placeholder="输入棋谱，如：炮2平5（列1-9右到左，行0-9下到上）" autocomplete="off">
+            <input type="text" id="move-input" placeholder="输入棋谱，如炮2平5或炮二平五" autocomplete="off" aria-label="棋谱输入框">
             <button id="btn-send" aria-label="发送棋谱">走棋</button>
         </div>
 
