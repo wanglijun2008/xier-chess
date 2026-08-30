@@ -1,4 +1,4 @@
-const CACHE_NAME = 'chinese-chess-v4';
+const CACHE_NAME = 'chinese-chess-v5';
 const urlsToCache = [
     '/',
     '/index.html',
@@ -17,7 +17,10 @@ self.addEventListener('install', event => {
         caches.open(CACHE_NAME)
             .then(cache => {
                 console.log('缓存资源');
-                return cache.addAll(urlsToCache);
+                // 逐项缓存，单个资源（如图标）缺失不影响整体安装
+                return Promise.all(urlsToCache.map(url =>
+                    cache.add(url).catch(err => console.warn('缓存失败：' + url, err))
+                ));
             })
     );
 });
