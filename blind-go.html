@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- VERSION: 2026-08-06-v26 修复自动播放、大序数、手机锁屏控制 -->
+<!-- VERSION: 2026-09-18-v27 修复移动网络语音、增加移动网络模式、自动切本地TTS -->
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
@@ -123,6 +123,7 @@
     .btn-warning:hover, .btn-warning:focus { background: #ef6c00; }
     .btn-danger { background: #c62828; }
     .btn-danger:hover, .btn-danger:focus { background: #d32f2f; }
+    .btn.active { background: #ffeb3b; color: #000; border-color: #ffeb3b; }
 
     /* 棋谱输入区 */
     .sgf-section {
@@ -647,6 +648,7 @@
       <button class="btn btn-primary" onclick="undoMove(this)">悔棋 (U)</button>
       <button class="btn" id="coordFormatBtn" onclick="toggleCoordFormat(this)">坐标格式: 国际（D4）</button>
       <button class="btn btn-success" id="ttsEngineBtn" onclick="toggleTTSEngine(this)">语音: 百度TTS</button>
+      <button class="btn" id="mobileModeBtn" onclick="toggleMobileMode(this)">移动网络模式: 关</button>
     </div>
 
     <!-- 棋谱输入和回放 -->
@@ -760,6 +762,8 @@
         <li><span class="key">上滑</span>回放模式：开始/停止自动播放</li>
         <li><span class="key">下滑</span>回放模式：停止当前语音</li>
         <li><span class="key">锁屏/耳机</span>回放时，手机锁屏界面或耳机线控可播放/暂停、上一首/下一首</li>
+        <li><span class="key">移动网络</span>使用移动数据（4G/5G）时，建议开启“移动网络模式”，使用本机语音播报，不依赖网络</li>
+        <li><span class="key">语音切换</span>点击“语音：百度TTS/本地TTS”可切换网络语音和本机语音</li>
         <li><span class="key">按钮</span>点击下方按钮执行各功能</li>
       </ul>
       <p style="color:#4fc3f7; margin-bottom:10px; font-weight:bold;">⌨️ 电脑键盘操作</p>
@@ -1106,7 +1110,7 @@
             <div style="background:#e65100;padding:10px;border-radius:6px;margin-bottom:8px;">
               <b style="color:#fff;">⚠️ 百度TTS不可用</b><br>
               <span style="color:#ffe0b2;font-size:0.85rem;">可能原因：网络连接问题 / 百度接口被限制</span><br>
-              <span style="color:#fff;font-size:0.9rem;">请检查网络后重试</span>
+              <span style="color:#fff;font-size:0.9rem;">建议点击“移动网络模式”切换到本机语音</span>
             </div>`;
           tipColor = '#ff9800';
         }
@@ -1124,9 +1128,8 @@
         tipColor = '#64b5f6';
       }
       
-      const tipText = isBaidu
-        ? '百度TTS模式'
-        : '本地TTS模式（鸿蒙不可用）';
+      const modeTip = mobileNetworkMode ? ' [移动网络模式]' : '';
+      const tipText = (isBaidu ? '百度TTS模式' : '本地TTS模式') + modeTip;
       
       el.innerHTML = `
         <div style="font-size:0.85rem;line-height:1.5;">
@@ -1280,8 +1283,44 @@
     // HTTP/HTTPS 协议下正常工作
     const isFileProtocol = location.protocol === 'file:';
     const isHarmonyOS = /OpenHarmony|HarmonyOS/i.test(navigator.userAgent);
-    
-    let ttsEngine = 'baidu';
+
+    // 移动网络检测：蜂窝数据下百度TTS经常被拦截或无法播放
+    function isMobileNetwork() {
+      const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+      if (!conn) return false;
+      const type = (conn.type || '').toString().toLowerCase();
+      const effective = (conn.effectiveType || '').toString().toLowerCase();
+      // cellular / 4g / 3g / 2g 都属于移动数据
+      return type === 'cellular' || /^(2g|3g|4g|5g)$/.test(effective);
+    }
+    const isLikelyMobile = /Android|iPhone|iPad|iPod|Mobile|HarmonyOS/i.test(navigator.userAgent);
+    const isGitHubPages = location.hostname.includes('github.io') || location.hostname.includes('pages.dev');
+
+    // 持久化用户偏好
+    function loadTTSPref() {
+      try {
+        const raw = localStorage.getItem('blindGoTTSPref');
+        return raw ? JSON.parse(raw) : {};
+      } catch(e) { return {}; }
+    }
+    function saveTTSPref(obj) {
+      try { localStorage.setItem('blindGoTTSPref', JSON.stringify(obj)); } catch(e) {}
+    }
+    let ttsPref = loadTTSPref();
+    let mobileNetworkMode = ttsPref.mobileNetworkMode;
+    // 如果用户没有明确设置过，在以下场景自动启用移动网络模式：
+    // 1. 检测到蜂窝网络；2. 手机UA且无法读取connection；3. GitHub Pages等公共静态托管
+    if (mobileNetworkMode === undefined) {
+      mobileNetworkMode = isMobileNetwork() || (isLikelyMobile && !navigator.connection) || isGitHubPages;
+    }
+
+    // 默认引擎：公共托管/手机/移动网络优先使用本地TTS，更稳定
+    let ttsEngine;
+    if (ttsPref.engine) {
+      ttsEngine = ttsPref.engine;
+    } else {
+      ttsEngine = (mobileNetworkMode || isLikelyMobile || isGitHubPages) ? 'local' : 'baidu';
+    }
     let onlineAudio = null;
     let onlineQueue = [];
     let onlinePlaying = false;
@@ -1356,10 +1395,17 @@
     window.addEventListener('DOMContentLoaded', () => {
       detectTTSSource(); // 异步检测，不影响页面初始化
       checkBaiduTTS();
+      // 同步 UI 上的引擎标签与移动网络模式
+      updateTTSEngineUI();
+      updateMobileModeUI();
       // 首次点击/触摸自动解锁音频（兼容手机浏览器自动播放限制）
       const autoUnlock = () => { if (!audioUnlocked) unlockAudio(); };
       document.addEventListener('click', autoUnlock, { once: true });
       document.addEventListener('touchstart', autoUnlock, { once: true });
+      // 如果在移动网络下默认切到本地TTS，给用户一个提示
+      if (mobileNetworkMode && ttsEngine === 'local') {
+        setTimeout(() => showSpeechBubble('移动网络模式：已启用本地语音，无需联网即可播报'), 1200);
+      }
     });
 
     // 电话/弹窗打断后自动恢复自动播放
@@ -1453,7 +1499,10 @@
           if (localTTSAvailable) {
             showSpeechBubble('网络语音不可用，切换本地TTS');
             ttsEngine = 'local';
-            speakLocal(text);
+            ttsPref.engine = 'local';
+            saveTTSPref(ttsPref);
+            updateTTSEngineUI();
+            speakLocal(text, onEnd); // 把当前句子的结束回调传给本地TTS，避免自动播放卡住
           } else {
             showSpeechBubble(reasonStr + '，10秒后重试');
             setTimeout(() => {
@@ -1569,6 +1618,7 @@
       u.onerror = (e) => {
         localSpeaking = false;
         if (e.error) { speechDiag.lastError = 'local错误:' + e.error; updateSpeechDiagnostics(); }
+        if (item.onEnd) { try { item.onEnd(); } catch(err){} }
         setTimeout(playLocalQueue, 100);
       };
       u.onend = () => {
@@ -1593,20 +1643,57 @@
       if ('speechSynthesis' in window) speechSynthesis.cancel();
     }
 
+    // 更新 UI 上语音引擎按钮的显示
+    function updateTTSEngineUI() {
+      const btn = document.getElementById('ttsEngineBtn');
+      if (btn) btn.textContent = '语音: ' + (ttsEngine === 'baidu' ? '百度TTS' : '本地TTS');
+    }
+    // 更新移动网络模式按钮的显示
+    function updateMobileModeUI() {
+      const btn = document.getElementById('mobileModeBtn');
+      if (btn) {
+        btn.textContent = '移动网络模式: ' + (mobileNetworkMode ? '开' : '关');
+        btn.classList.toggle('active', mobileNetworkMode);
+      }
+    }
+
     // 切换语音引擎
     function toggleTTSEngine(btn) {
       stopOnlineTTS();
       clearLocalSpeakQueue();
       ttsEngine = ttsEngine === 'baidu' ? 'local' : 'baidu';
-      const label = ttsEngine === 'baidu' ? '百度TTS' : '本地TTS';
-      if (btn) btn.textContent = '语音: ' + label;
-      speak('已切换到' + label + '引擎');
+      ttsPref.engine = ttsEngine;
+      saveTTSPref(ttsPref);
+      updateTTSEngineUI();
+      speak('已切换到' + (ttsEngine === 'baidu' ? '百度TTS' : '本地TTS') + '引擎');
+      updateSpeechDiagnostics();
+    }
+
+    // 切换移动网络模式
+    function toggleMobileMode(btn) {
+      mobileNetworkMode = !mobileNetworkMode;
+      ttsPref.mobileNetworkMode = mobileNetworkMode;
+      saveTTSPref(ttsPref);
+      if (mobileNetworkMode) {
+        stopOnlineTTS();
+        clearLocalSpeakQueue();
+        ttsEngine = 'local';
+        ttsPref.engine = 'local';
+        saveTTSPref(ttsPref);
+        updateTTSEngineUI();
+        speak('移动网络模式已开启，使用本地语音');
+      } else {
+        speak('移动网络模式已关闭');
+      }
+      updateMobileModeUI();
       updateSpeechDiagnostics();
     }
 
     function speak(text, onEnd) {
       showSpeechBubble(text);
-      if (ttsEngine === 'baidu') {
+      // 移动网络模式下强制使用本地TTS，避免百度TTS被运营商拦截导致无声
+      const engine = mobileNetworkMode ? 'local' : ttsEngine;
+      if (engine === 'baidu') {
         speakBaidu(text, onEnd);
       } else {
         speakLocal(text, onEnd);
@@ -2464,8 +2551,8 @@
         const breathe = Math.max(300, 1200 / speechRate);
         autoPlayTimer = setTimeout(() => autoPlayStep(), breathe);
       };
-      // 8秒安全兜底：即使语音回调未触发也继续播放
-      const safetyTimer = setTimeout(nextStep, 8000);
+      // 12秒安全兜底：即使语音回调未触发也继续播放（本地TTS较慢时也能兜底）
+      const safetyTimer = setTimeout(nextStep, 12000);
       replayNext(null, () => {
         clearTimeout(safetyTimer);
         nextStep();
