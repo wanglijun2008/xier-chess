@@ -1089,48 +1089,80 @@
       // 根据检测结果生成不同的提示
       let statusHtml = '';
       let tipColor = '#69f0ae';
-      let actionHtml = '';
-      
-      if (baiduTTSAvailable === false) {
-        // 百度TTS不可用
-        if (isFileProtocol) {
+
+      if (isBaidu) {
+        // 百度TTS模式下的提示
+        if (baiduTTSAvailable === false) {
+          if (isFileProtocol) {
+            statusHtml = `
+              <div style="background:#c62828;padding:10px;border-radius:6px;margin-bottom:8px;">
+                <b style="color:#fff;">当前协议：file://</b><br>
+                <span style="color:#ffccbc;font-size:0.85rem;">鸿蒙/华为浏览器在file://下无法播放百度TTS</span><br>
+                <span style="color:#fff;font-size:0.9rem;">必须按以下步骤操作：</span><br>
+                <span style="color:#ffe0b2;font-size:0.85rem;">1. 电脑双击"启动.bat"</span><br>
+                <span style="color:#ffe0b2;font-size:0.85rem;">2. 手机连同一WiFi</span><br>
+                <span style="color:#ffe0b2;font-size:0.85rem;">3. 手机浏览器地址栏输入：</span><br>
+                <span style="color:#ffeb3b;font-size:1rem;font-weight:bold;word-break:break-all;">http://电脑IP:8000/blind-go.html</span>
+              </div>`;
+            tipColor = '#ff5252';
+          } else {
+            statusHtml = `
+              <div style="background:#e65100;padding:10px;border-radius:6px;margin-bottom:8px;">
+                <b style="color:#fff;">百度TTS不可用</b><br>
+                <span style="color:#ffe0b2;font-size:0.85rem;">可能原因：网络连接问题 / 百度接口被限制</span><br>
+                <span style="color:#fff;font-size:0.9rem;">建议点击“移动网络模式”切换到本机语音</span>
+              </div>`;
+            tipColor = '#ff9800';
+          }
+        } else if (baiduTTSAvailable === true) {
           statusHtml = `
-            <div style="background:#c62828;padding:10px;border-radius:6px;margin-bottom:8px;">
-              <b style="color:#fff;">🚫 当前协议：file://</b><br>
-              <span style="color:#ffccbc;font-size:0.85rem;">鸿蒙/华为浏览器在file://下无法播放百度TTS</span><br>
-              <span style="color:#fff;font-size:0.9rem;">必须按以下步骤操作：</span><br>
-              <span style="color:#ffe0b2;font-size:0.85rem;">1. 电脑双击"启动.bat"</span><br>
-              <span style="color:#ffe0b2;font-size:0.85rem;">2. 手机连同一WiFi</span><br>
-              <span style="color:#ffe0b2;font-size:0.85rem;">3. 手机浏览器地址栏输入：</span><br>
-              <span style="color:#ffeb3b;font-size:1rem;font-weight:bold;word-break:break-all;">http://电脑IP:8000/blind-go.html</span>
+            <div style="background:#2e7d32;padding:8px;border-radius:6px;margin-bottom:8px;">
+              <b style="color:#a5d6a7;">百度TTS检测通过，音频可用</b>
             </div>`;
-          tipColor = '#ff5252';
         } else {
           statusHtml = `
+            <div style="background:#1565c0;padding:8px;border-radius:6px;margin-bottom:8px;">
+              <b style="color:#90caf9;">正在检测音频...</b>
+            </div>`;
+          tipColor = '#64b5f6';
+        }
+      } else {
+        // 本地TTS模式下的提示
+        if (!('speechSynthesis' in window)) {
+          statusHtml = `
+            <div style="background:#c62828;padding:10px;border-radius:6px;margin-bottom:8px;">
+              <b style="color:#fff;">当前浏览器不支持语音合成</b><br>
+              <span style="color:#ffccbc;font-size:0.85rem;">请换用 Chrome / Safari / 系统浏览器打开</span>
+            </div>`;
+          tipColor = '#ff5252';
+        } else if (d.voices === 0) {
+          statusHtml = `
             <div style="background:#e65100;padding:10px;border-radius:6px;margin-bottom:8px;">
-              <b style="color:#fff;">⚠️ 百度TTS不可用</b><br>
-              <span style="color:#ffe0b2;font-size:0.85rem;">可能原因：网络连接问题 / 百度接口被限制</span><br>
-              <span style="color:#fff;font-size:0.9rem;">建议点击“移动网络模式”切换到本机语音</span>
+              <b style="color:#fff;">未检测到语音包</b><br>
+              <span style="color:#ffe0b2;font-size:0.85rem;">请去手机设置 → 语言与输入法 → 文字转语音(TTS)，下载中文语音数据</span><br>
+              <span style="color:#fff;font-size:0.85rem;">推荐：Google文字转语音、讯飞语记、百度语音</span>
             </div>`;
           tipColor = '#ff9800';
+        } else if (d.zhVoices === 0) {
+          statusHtml = `
+            <div style="background:#e65100;padding:10px;border-radius:6px;margin-bottom:8px;">
+              <b style="color:#fff;">有语音包，但没有中文语音</b><br>
+              <span style="color:#ffe0b2;font-size:0.85rem;">请在手机TTS设置里下载“中文/普通话”语音数据</span><br>
+              <span style="color:#fff;font-size:0.85rem;">设置后点击“测试语音”验证</span>
+            </div>`;
+          tipColor = '#ff9800';
+        } else {
+          statusHtml = `
+            <div style="background:#2e7d32;padding:8px;border-radius:6px;margin-bottom:8px;">
+              <b style="color:#a5d6a7;">本地TTS就绪，共 ${d.voices} 个语音，${d.zhVoices} 个中文语音</b><br>
+              <span style="color:#fff;font-size:0.8rem;">当前选用：${d.picked}</span>
+            </div>`;
         }
-      } else if (baiduTTSAvailable === true) {
-        statusHtml = `
-          <div style="background:#2e7d32;padding:8px;border-radius:6px;margin-bottom:8px;">
-            <b style="color:#a5d6a7;">✅ 百度TTS检测通过，音频可用</b>
-          </div>`;
-        tipColor = '#69f0ae';
-      } else {
-        statusHtml = `
-          <div style="background:#1565c0;padding:8px;border-radius:6px;margin-bottom:8px;">
-            <b style="color:#90caf9;">🔍 正在检测音频...</b>
-          </div>`;
-        tipColor = '#64b5f6';
       }
-      
+
       const modeTip = mobileNetworkMode ? ' [移动网络模式]' : '';
       const tipText = (isBaidu ? '百度TTS模式' : '本地TTS模式') + modeTip;
-      
+
       el.innerHTML = `
         <div style="font-size:0.85rem;line-height:1.5;">
           ${statusHtml}
@@ -1138,8 +1170,8 @@
             协议：${d.protocol} | 引擎：${tipText} | 状态：${d.lastError}
           </div>
           <div style="margin-top:6px;">
-            <button class="btn" style="padding:6px 12px;font-size:0.9rem;" onclick="testSpeech(this)">🔊 测试语音</button>
-            <button class="btn" style="padding:6px 12px;font-size:0.9rem;margin-left:6px;background:#e65100;" onclick="unlockAudio(this)">🔓 解锁</button>
+            <button class="btn" style="padding:6px 12px;font-size:0.9rem;" onclick="testSpeech(this)">测试语音</button>
+            <button class="btn" style="padding:6px 12px;font-size:0.9rem;margin-left:6px;background:#e65100;" onclick="unlockAudio(this)">解锁</button>
             <button class="btn" style="padding:6px 10px;font-size:0.8rem;margin-left:6px;" onclick="toggleSpeechDiagDetail(this)">详细</button>
           </div>
           <div id="speechDiagDetail" style="display:none;margin-top:6px;font-size:0.8rem;word-break:break-all;"></div>
@@ -1163,13 +1195,48 @@
       stopOnlineTTS();
       clearLocalSpeakQueue();
       onlineFailCount = 0;
-      ttsEngine = 'baidu';  // 强制切回网络引擎，忽略之前的失败状态
 
-      if (ttsEngine === 'baidu') {
+      const engine = mobileNetworkMode ? 'local' : ttsEngine;
+      if (engine === 'baidu') {
         speakBaidu('语音测试，围棋听棋');
       } else {
-        speakLocal('语音测试。');
+        testLocalTTS();
       }
+    }
+
+    // 专门测试本地TTS，并给出明确反馈
+    function testLocalTTS() {
+      if (!('speechSynthesis' in window)) {
+        showSpeechBubble('浏览器不支持语音合成');
+        speechDiag.lastError = '不支持speechSynthesis';
+        updateSpeechDiagnostics();
+        return;
+      }
+      // 强制刷新声音列表
+      const voices = speechSynthesis.getVoices();
+      if (voices.length === 0) {
+        showSpeechBubble('未加载到语音包，请检查系统TTS设置');
+        speechDiag.lastError = '无语音包';
+        updateSpeechDiagnostics();
+        return;
+      }
+      const zh = voices.find(v => v.lang && (v.lang.startsWith('zh') || v.lang.includes('CN') || v.lang.includes('TW')));
+      if (!zh && !zhVoice) {
+        showSpeechBubble('没有中文语音包，请去手机设置下载');
+        speechDiag.lastError = '无中文语音包';
+        updateSpeechDiagnostics();
+      }
+      const u = new SpeechSynthesisUtterance('语音测试，围棋听棋');
+      u.lang = 'zh-CN';
+      u.rate = speechRate;
+      u.pitch = 1.0;
+      u.volume = 1.0;
+      if (zhVoice || zh) u.voice = zhVoice || zh;
+      u.onstart = () => { speechDiag.lastError = '本地TTS已开始'; updateSpeechDiagnostics(); };
+      u.onend = () => { speechDiag.lastError = '本地TTS测试完成'; updateSpeechDiagnostics(); showSpeechBubble('本地TTS测试完成'); };
+      u.onerror = (e) => { speechDiag.lastError = '本地TTS错误:' + e.error; updateSpeechDiagnostics(); showSpeechBubble('本地TTS错误:' + e.error); };
+      speechSynthesis.cancel();
+      speechSynthesis.speak(u);
     }
 
     // 解锁音频播放权限（针对华为/鸿蒙系统浏览器的严格自动播放策略）
@@ -1225,6 +1292,16 @@
       };
       const silentWav = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
       trySrc(silentWav);
+
+      // 3. 同时激活 speechSynthesis（本地TTS需要）
+      if ('speechSynthesis' in window) {
+        try {
+          const unlockU = new SpeechSynthesisUtterance(' ');
+          unlockU.volume = 0.01;
+          unlockU.rate = 2;
+          speechSynthesis.speak(unlockU);
+        } catch(e) {}
+      }
     }
 
     function initSpeech() {
