@@ -176,6 +176,27 @@
         document.getElementById('record-close').addEventListener('click', closeRecordModal);
         // 解析棋谱
         document.getElementById('record-parse').addEventListener('click', handleRecordParse);
+        // 文件导入
+        document.getElementById('record-file').addEventListener('click', function() {
+            document.getElementById('record-file-input').click();
+        });
+        document.getElementById('record-file-input').addEventListener('change', function(e) {
+            var file = e.target.files[0];
+            if (!file) return;
+            var reader = new FileReader();
+            reader.onload = function(ev) {
+                var text = ev.target.result;
+                // 尝试多种编码，优先UTF-8
+                document.getElementById('record-text').value = text;
+                speak('已导入文件，共' + text.split(/[\n\r]+/).filter(function(s){return s.trim();}).length + '行');
+            };
+            reader.onerror = function() {
+                showMessage('文件读取失败', 2000);
+            };
+            reader.readAsText(file, 'UTF-8');
+            // 重置 input 以便重复选择同一文件
+            e.target.value = '';
+        });
         // 上一步
         document.getElementById('record-prev').addEventListener('click', function() {
             if (recordPlayer) {
