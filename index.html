@@ -7,7 +7,7 @@
     <meta name="mobile-web-app-capable" content="yes">
     <title>西尔象棋盲棋</title>
     <link rel="manifest" href="manifest.json">
-    <link rel="stylesheet" href="style.css?v=20260921b">
+    <link rel="stylesheet" href="style.css?v=20260921c">
 </head>
 <body>
     <div id="app">
@@ -81,8 +81,12 @@
                 <button id="record-close" aria-label="关闭">✕</button>
             </div>
             <div id="record-input-area">
-                <textarea id="record-text" placeholder="粘贴棋谱，每行一步，如：&#10;炮2平5&#10;马8进7&#10;车一平二&#10;&#10;支持格式：炮2平5、炮二平五、前车2进3&#10;双方各以自己右下角为基准" aria-label="棋谱文本"></textarea>
-                <button id="record-parse" aria-label="解析棋谱">解析棋谱</button>
+                <textarea id="record-text" placeholder="粘贴棋谱，如：&#10;1. 炮二平五 马8进7&#10;2. 马二进三 车9平8&#10;&#10;也支持每行一步：炮2平5&#10;或从文件导入 ↓" aria-label="棋谱文本"></textarea>
+                <div style="display:flex;gap:8px;">
+                    <button id="record-parse" aria-label="解析棋谱" style="flex:1;">解析棋谱</button>
+                    <button id="record-file" aria-label="从文件导入" style="flex:0 0 auto;background:#FF9800;">📂文件</button>
+                </div>
+                <input type="file" id="record-file-input" accept=".txt,.pgn,.xcc,.cchess,.txt" style="display:none;">
             </div>
             <div id="record-info" style="display:none;"></div>
             <div id="record-controls" style="display:none;">
@@ -103,12 +107,12 @@
         </div>
     </div>
 
-    <script src="chess.js?v=20260921b"></script>
-    <script src="record-player.js?v=20260921b"></script>
-    <script src="app.js?v=20260921b"></script>
+    <script src="chess.js?v=20260921c"></script>
+    <script src="record-player.js?v=20260921c"></script>
+    <script src="app.js?v=20260921c"></script>
     <script>
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('service-worker.js?v=20260921b').then(function(reg) {
+            navigator.serviceWorker.register('service-worker.js?v=20260921c').then(function(reg) {
                 // 检测到新版本时立即刷新
                 if (reg.waiting) reg.waiting.postMessage({type: 'SKIP_WAITING'});
             });
