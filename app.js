@@ -140,12 +140,146 @@
         });
     }
 
+    // ========== 功能5：棋谱回放 ==========
+    let recordPlayer = null;
+
+    function setupRecordPlayer() {
+        recordPlayer = new ChessRecordPlayer(game, {
+            move: function(m, result, stepNum, total, isUndo) {
+                playMoveSound();
+                if (result.message) {
+                    speak(result.message);
+                    lastSpokenMessage = result.message;
+                }
+                updateRecordUI(stepNum, total);
+                drawBoard();
+                updateStatus();
+            },
+            playState: function(isPlaying) {
+                var btn = document.getElementById('record-play');
+                if (isPlaying) {
+                    btn.textContent = '⏸暂停';
+                    btn.className = 'playing';
+                } else {
+                    btn.textContent = '▶播放';
+                    btn.className = '';
+                }
+            },
+            finished: function() {
+                speak('棋谱回放完毕，共' + recordPlayer.moves.length + '步');
+            }
+        });
+
+        // 打开棋谱模态框
+        document.getElementById('btn-record').addEventListener('click', openRecordModal);
+        // 关闭
+        document.getElementById('record-close').addEventListener('click', closeRecordModal);
+        // 解析棋谱
+        document.getElementById('record-parse').addEventListener('click', handleRecordParse);
+        // 上一步
+        document.getElementById('record-prev').addEventListener('click', function() {
+            if (recordPlayer) {
+                recordPlayer.pause();
+                recordPlayer.prev();
+            }
+        });
+        // 播放/暂停
+        document.getElementById('record-play').addEventListener('click', function() {
+            if (!recordPlayer || recordPlayer.moves.length === 0) return;
+            if (recordPlayer.playing) {
+                recordPlayer.pause();
+            } else {
+                recordPlayer.play();
+            }
+        });
+        // 下一步
+        document.getElementById('record-next').addEventListener('click', function() {
+            if (recordPlayer) {
+                recordPlayer.pause();
+                recordPlayer.next();
+            }
+        });
+        // 速度控制
+        document.getElementById('record-speed-range').addEventListener('input', function() {
+            if (recordPlayer) {
+                // 滑块值越大速度越快（间隔越短）
+                var val = parseInt(this.value, 10);
+                var interval = 5500 - val; // 5000->500ms, 500->5000ms
+                recordPlayer.setSpeed(interval);
+            }
+        });
+    }
+
+    function openRecordModal() {
+        document.getElementById('record-modal').style.display = 'flex';
+        document.getElementById('record-info').style.display = 'none';
+        document.getElementById('record-controls').style.display = 'none';
+        document.getElementById('record-input-area').style.display = 'flex';
+        document.getElementById('record-text').value = '';
+        speak('请粘贴或输入棋谱，每行一步');
+    }
+
+    function closeRecordModal() {
+        if (recordPlayer) {
+            recordPlayer.stop();
+        }
+        document.getElementById('record-modal').style.display = 'none';
+    }
+
+    function handleRecordParse() {
+        var text = document.getElementById('record-text').value.trim();
+        if (!text) {
+            showMessage('请先输入棋谱内容', 2000);
+            return;
+        }
+
+        // 先开始新局（棋谱回放从初始局面开始）
+        game.board = game.initBoard();
+        game.currentPlayer = 'red';
+        game.selectedPiece = null;
+        game.moveHistory = [];
+        game.round = 1;
+        game.resetState();
+        selectedPos = null;
+        updateStatus();
+        drawBoard();
+
+        var result = recordPlayer.parse(text);
+        var infoEl = document.getElementById('record-info');
+        infoEl.style.display = 'block';
+
+        if (result.total === 0) {
+            infoEl.textContent = '未解析到有效走法，请检查棋谱格式';
+            speak('未解析到有效走法');
+            return;
+        }
+
+        var msg = '成功解析' + result.total + '步棋';
+        if (result.errors.length > 0) {
+            msg += '，' + result.errors.length + '步有误';
+            infoEl.textContent = msg + '：' + result.errors.slice(0, 3).join('；');
+        } else {
+            infoEl.textContent = msg;
+        }
+        speak(msg);
+
+        // 显示控制按钮，隐藏输入区
+        document.getElementById('record-input-area').style.display = 'none';
+        document.getElementById('record-controls').style.display = 'flex';
+        updateRecordUI(0, result.total);
+    }
+
+    function updateRecordUI(current, total) {
+        document.getElementById('record-step-info').textContent = '第 ' + current + ' / ' + total + ' 步';
+    }
+
     // 初始化
     function init() {
         resizeCanvas();
         drawBoard();
         setupEventListeners();
         setupListTouchEvents();
+        setupRecordPlayer();
         speak('西尔象棋盲棋已启动，红方先行');
     }
 
@@ -618,7 +752,7 @@
 
     // 帮助
     function showHelp() {
-        const help = '操作说明：点击棋子选中，滑动走棋。输入或说出棋谱，如炮2平5或炮二平五，同列有相同棋子时加前或后，如前车2进3。列号1到9从自己右边向左数，行号0到9从自己向对方数，双方各以自己的右下角为基准。底部按钮：新局、悔棋、播报、重复、模式、语音、列表、帮助。';
+        const help = '操作说明：点击棋子选中，滑动走棋。输入或说出棋谱，如炮2平5或炮二平五，同列有相同棋子时加前或后，如前车2进3。列号1到9从自己右边向左数，行号0到9从自己向对方数，双方各以自己的右下角为基准。点击棋谱按钮可导入棋谱听棋。底部按钮：新局、悔棋、播报、重复、模式、语音、列表、棋谱、帮助。';
         speak(help);
         lastSpokenMessage = help;
     }
