@@ -14,23 +14,24 @@ class ChessRecordPlayer {
     }
 
     // 解析棋谱文本，返回 { total, ok, errors }
+    // 支持格式：
+    //   1. 炮二平五 马8进7    （天天象棋/书谱：每行一个回合）
+    //   炮2平5                 （每行一步）
+    //   1.炮二平五
+    //   马8进7
     parse(text) {
         this.stop();
         this.moves = [];
         this.current = 0;
 
-        // 按行分割，支持多种分隔符
-        const lines = text.split(/[\n\r;；]+/).map(s => s.trim()).filter(Boolean);
         const errors = [];
         let color = 'red'; // 红先
 
-        for (let i = 0; i < lines.length; i++) {
-            const raw = lines[i];
-            // 跳过纯数字行（回合编号如 "1." "1、"）
-            if (/^\d+[\.\、\)]?\s*$/.test(raw)) continue;
-            // 跳过注释行
-            if (raw.startsWith('#') || raw.startsWith('//')) continue;
+        // 第一步：把文本拆成独立的走法列表
+        const moveList = this._extractMoves(text);
 
+        for (let i = 0; i < moveList.length; i++) {
+            const raw = moveList[i];
             const cmd = this.game.parseVoiceCommand(raw);
             if (!cmd) {
                 errors.push('第' + (this.moves.length + 1) + '步：无法识别「' + raw + '」');
@@ -44,7 +45,6 @@ class ChessRecordPlayer {
             if (!move || move.ambiguous) {
                 const origColor = this.game.currentPlayer;
                 const otherColor = origColor === 'red' ? 'black' : 'red';
-                // 临时切换
                 this.game.currentPlayer = otherColor;
                 const altMove = this.game.resolveVoiceMove(cmd);
                 this.game.currentPlayer = origColor;
@@ -73,6 +73,81 @@ class ChessRecordPlayer {
         }
 
         return { total: this.moves.length, errors: errors };
+    }
+
+    // 从文本中提取独立的走法列表
+    _extractMoves(text) {
+        const moves = [];
+        // 按行分割
+        const lines = text.split(/[\n\r]+/).map(s => s.trim()).filter(Boolean);
+
+        for (const line of lines) {
+            // 跳过注释行
+            if (line.startsWith('#') || line.startsWith('//') || line.startsWith('{')) continue;
+
+            // 尝试匹配“回合编号 + 红走法 + 黑走法”格式
+            // 例如: "1. 炮二平五 马8进7" 或 "1、炮二平五 马8进7" 或 "1)炮二平五 马8进7"
+            const roundMatch = line.match(/^\d+[\.\、\)\]]?\s*(.+)$/);
+            if (roundMatch) {
+                const rest = roundMatch[1].trim();
+                // 把剩余部分拆成两个走法（红方 + 黑方）
+                const pair = this._splitMovePair(rest);
+                if (pair) {
+                    if (pair[0]) moves.push(pair[0]);
+                    if (pair[1]) moves.push(pair[1]);
+                    continue;
+                }
+            }
+
+            // 没有回合编号，尝试按空格/分号拆成多个走法
+            const parts = line.split(/[\s;；]+/).map(s => s.trim()).filter(Boolean);
+            for (const part of parts) {
+                // 跳过纯数字（孤立的回合编号）
+                if (/^\d+[\.\、\)\]]?$/.test(part)) continue;
+                moves.push(part);
+            }
+        }
+
+        return moves;
+    }
+
+    // 把一行中的两个走法分开（红方走法 + 黑方走法）
+    // 例如 "炮二平五 马8进7" → ["炮二平五", "马8进7"]
+    _splitMovePair(text) {
+        // 找到第二个棋子名的位置
+        const pieceNames = ['帅', '将', '仕', '士', '相', '象', '马', '车', '炮', '兵', '卒', '前', '中', '后'];
+        // 从第一个棋子名之后开始找第二个
+        let firstEnd = -1;
+        for (let i = 0; i < text.length; i++) {
+            if (pieceNames.indexOf(text[i]) >= 0) {
+                // 找到第一个棋子名，继续找它的数字部分
+                if (i + 1 < text.length && /[0-9０-９一二两三四五六七八九]/.test(text[i + 1])) {
+                    // 继续找动作（进/退/平）
+                    let j = i + 2;
+                    while (j < text.length && /[0-9０-９一二两三四五六七八九]/.test(text[j])) j++;
+                    if (j < text.length && /[进退平]/.test(text[j])) {
+                        // 继续找目标数字
+                        j++;
+                        while (j < text.length && /[0-9０-９一二两三四五六七八九]/.test(text[j])) j++;
+                        firstEnd = j;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (firstEnd < 0) return null;
+
+        const first = text.substring(0, firstEnd).trim();
+        const rest = text.substring(firstEnd).trim();
+
+        if (!rest) return [first, null];
+
+        // 去掉分隔符（空格等）
+        const second = rest.replace(/^[\s;；]+/, '').trim();
+        if (!second) return [first, null];
+
+        return [first, second];
     }
 
     // 执行第 index 步（0-based）
