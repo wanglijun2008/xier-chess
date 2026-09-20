@@ -5,22 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
-    <title>西尔象棋盲棋（公开免费版）</title>
+    <title>西尔象棋盲棋</title>
     <link rel="manifest" href="manifest.json">
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=20260920">
 </head>
 <body>
     <div id="app">
-        <!-- 围棋听棋入口 -->
-        <div id="nav-bar" style="padding: 12px; text-align: center; background: #1a1a1a; border-bottom: 2px solid #ffeb3b;">
-            <a href="blind-go.html" style="color: #ffeb3b; font-size: 1.2rem; font-weight: bold; text-decoration: underline;" aria-label="进入围棋听棋公开免费版，本页面与下方象棋相互独立">进入围棋听棋（公开免费版）</a>
-            <div style="color: #ccc; font-size: 0.9rem; margin-top: 4px;">围棋与下方象棋是两个独立页面，可分别使用</div>
-        </div>
         <!-- 状态栏 -->
         <div id="status-bar" aria-live="polite">
             <span id="turn-info">红方走棋</span>
             <span id="round-info">第 1 回合</span>
-            <span style="color: #ffeb3b; font-weight: bold;">（公开免费共享）</span>
         </div>
 
         <!-- 可见消息区域（语音失效时也能看到提示） -->
@@ -68,6 +62,10 @@
                 <span class="icon">☰</span>
                 <span class="label">列表</span>
             </button>
+            <button class="tool-btn" id="btn-record" aria-label="棋谱回放">
+                <span class="icon">📜</span>
+                <span class="label">棋谱</span>
+            </button>
             <button class="tool-btn" id="btn-help" aria-label="帮助">
                 <span class="icon">?</span>
                 <span class="label">帮助</span>
@@ -75,11 +73,53 @@
         </div>
     </div>
 
-    <script src="chess.js"></script>
-    <script src="app.js"></script>
+    <!-- 棋谱回放模态框 -->
+    <div id="record-modal" style="display:none;">
+        <div id="record-modal-content">
+            <div id="record-modal-header">
+                <span>棋谱回放</span>
+                <button id="record-close" aria-label="关闭">✕</button>
+            </div>
+            <div id="record-input-area">
+                <textarea id="record-text" placeholder="粘贴棋谱，每行一步，如：&#10;炮2平5&#10;马8进7&#10;车一平二&#10;&#10;支持格式：炮2平5、炮二平五、前车2进3&#10;双方各以自己右下角为基准" aria-label="棋谱文本"></textarea>
+                <button id="record-parse" aria-label="解析棋谱">解析棋谱</button>
+            </div>
+            <div id="record-info" style="display:none;"></div>
+            <div id="record-controls" style="display:none;">
+                <div id="record-progress">
+                    <span id="record-step-info">第 0 / 0 步</span>
+                </div>
+                <div id="record-buttons">
+                    <button id="record-prev" aria-label="上一步">◀上步</button>
+                    <button id="record-play" aria-label="播放">▶播放</button>
+                    <button id="record-next" aria-label="下一步">下步▶</button>
+                </div>
+                <div id="record-speed">
+                    <span>慢</span>
+                    <input type="range" id="record-speed-range" min="500" max="5000" step="500" value="2000" aria-label="播放速度">
+                    <span>快</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="chess.js?v=20260920"></script>
+    <script src="record-player.js?v=20260920"></script>
+    <script src="app.js?v=20260920"></script>
     <script>
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('service-worker.js');
+            navigator.serviceWorker.register('service-worker.js?v=20260920').then(function(reg) {
+                // 检测到新版本时立即刷新
+                if (reg.waiting) reg.waiting.postMessage({type: 'SKIP_WAITING'});
+            });
+            // 新 SW 接管后立即刷新页面
+            var refreshing = false;
+            navigator.serviceWorker.addEventListener('controllerchange', function() {
+                if (!refreshing) {
+                    refreshing = true;
+                    window.location.reload();
+                }
+            });
         }
     </script>
 </body>
