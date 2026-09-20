@@ -1,4 +1,4 @@
-const CACHE_NAME = 'chinese-chess-v6';
+const CACHE_NAME = 'chinese-chess-v7';
 const urlsToCache = [
     '/',
     '/index.html',
@@ -26,6 +26,13 @@ self.addEventListener('install', event => {
     );
 });
 
+// 监听消息：强制跳过等待
+self.addEventListener('message', event => {
+    if (event.data && event.data.type === 'SKIP_WAITING') {
+        self.skipWaiting();
+    }
+});
+
 // 拦截请求 - 网络优先策略（确保JS/CSS总是获取最新版本）
 self.addEventListener('fetch', event => {
     const url = new URL(event.request.url);
@@ -42,8 +49,12 @@ self.addEventListener('fetch', event => {
                     return response;
                 })
                 .catch(() => {
-                    // 网络失败，使用缓存
-                    return caches.match(event.request);
+                    // 网络失败，尝试不带查询参数的URL匹配缓存
+                    const cleanUrl = url.origin + url.pathname;
+                    return caches.match(cleanUrl).then(r => {
+                        if (r) return r;
+                        return caches.match(event.request);
+                    });
                 })
         );
     } else {
