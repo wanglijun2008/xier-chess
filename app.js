@@ -144,6 +144,13 @@
     let recordPlayer = null;
 
     function setupRecordPlayer() {
+        // 检查必要元素是否存在
+        if (!document.getElementById('btn-record') ||
+            !document.getElementById('record-modal') ||
+            typeof ChessRecordPlayer === 'undefined') {
+            return; // 旧版 HTML 没有棋谱功能，跳过
+        }
+    
         recordPlayer = new ChessRecordPlayer(game, {
             move: function(m, result, stepNum, total, isUndo) {
                 playMoveSound();
@@ -157,75 +164,68 @@
             },
             playState: function(isPlaying) {
                 var btn = document.getElementById('record-play');
-                if (isPlaying) {
-                    btn.textContent = '⏸暂停';
-                    btn.className = 'playing';
-                } else {
-                    btn.textContent = '▶播放';
-                    btn.className = '';
+                if (btn) {
+                    btn.textContent = isPlaying ? '⏸暂停' : '▶播放';
+                    btn.className = isPlaying ? 'playing' : '';
                 }
             },
             finished: function() {
                 speak('棋谱回放完毕，共' + recordPlayer.moves.length + '步');
             }
         });
-
+    
         // 打开棋谱模态框
-        document.getElementById('btn-record').addEventListener('click', openRecordModal);
+        var btnRecord = document.getElementById('btn-record');
+        if (btnRecord) btnRecord.addEventListener('click', openRecordModal);
         // 关闭
-        document.getElementById('record-close').addEventListener('click', closeRecordModal);
+        var btnClose = document.getElementById('record-close');
+        if (btnClose) btnClose.addEventListener('click', closeRecordModal);
         // 解析棋谱
-        document.getElementById('record-parse').addEventListener('click', handleRecordParse);
+        var btnParse = document.getElementById('record-parse');
+        if (btnParse) btnParse.addEventListener('click', handleRecordParse);
         // 文件导入
-        document.getElementById('record-file').addEventListener('click', function() {
-            document.getElementById('record-file-input').click();
-        });
-        document.getElementById('record-file-input').addEventListener('change', function(e) {
-            var file = e.target.files[0];
-            if (!file) return;
-            var reader = new FileReader();
-            reader.onload = function(ev) {
-                var text = ev.target.result;
-                // 尝试多种编码，优先UTF-8
-                document.getElementById('record-text').value = text;
-                speak('已导入文件，共' + text.split(/[\n\r]+/).filter(function(s){return s.trim();}).length + '行');
-            };
-            reader.onerror = function() {
-                showMessage('文件读取失败', 2000);
-            };
-            reader.readAsText(file, 'UTF-8');
-            // 重置 input 以便重复选择同一文件
-            e.target.value = '';
-        });
+        var btnFile = document.getElementById('record-file');
+        var fileInput = document.getElementById('record-file-input');
+        if (btnFile && fileInput) {
+            btnFile.addEventListener('click', function() { fileInput.click(); });
+            fileInput.addEventListener('change', function(e) {
+                var file = e.target.files[0];
+                if (!file) return;
+                var reader = new FileReader();
+                reader.onload = function(ev) {
+                    var text = ev.target.result;
+                    document.getElementById('record-text').value = text;
+                    speak('已导入文件，共' + text.split(/[\n\r]+/).filter(function(s){return s.trim();}).length + '行');
+                };
+                reader.onerror = function() {
+                    showMessage('文件读取失败', 2000);
+                };
+                reader.readAsText(file, 'UTF-8');
+                e.target.value = '';
+            });
+        }
         // 上一步
-        document.getElementById('record-prev').addEventListener('click', function() {
-            if (recordPlayer) {
-                recordPlayer.pause();
-                recordPlayer.prev();
-            }
+        var btnPrev = document.getElementById('record-prev');
+        if (btnPrev) btnPrev.addEventListener('click', function() {
+            if (recordPlayer) { recordPlayer.pause(); recordPlayer.prev(); }
         });
         // 播放/暂停
-        document.getElementById('record-play').addEventListener('click', function() {
+        var btnPlay = document.getElementById('record-play');
+        if (btnPlay) btnPlay.addEventListener('click', function() {
             if (!recordPlayer || recordPlayer.moves.length === 0) return;
-            if (recordPlayer.playing) {
-                recordPlayer.pause();
-            } else {
-                recordPlayer.play();
-            }
+            if (recordPlayer.playing) { recordPlayer.pause(); } else { recordPlayer.play(); }
         });
         // 下一步
-        document.getElementById('record-next').addEventListener('click', function() {
-            if (recordPlayer) {
-                recordPlayer.pause();
-                recordPlayer.next();
-            }
+        var btnNext = document.getElementById('record-next');
+        if (btnNext) btnNext.addEventListener('click', function() {
+            if (recordPlayer) { recordPlayer.pause(); recordPlayer.next(); }
         });
         // 速度控制
-        document.getElementById('record-speed-range').addEventListener('input', function() {
+        var speedRange = document.getElementById('record-speed-range');
+        if (speedRange) speedRange.addEventListener('input', function() {
             if (recordPlayer) {
-                // 滑块值越大速度越快（间隔越短）
                 var val = parseInt(this.value, 10);
-                var interval = 5500 - val; // 5000->500ms, 500->5000ms
+                var interval = 5500 - val;
                 recordPlayer.setSpeed(interval);
             }
         });
@@ -296,11 +296,11 @@
 
     // 初始化
     function init() {
-        resizeCanvas();
-        drawBoard();
-        setupEventListeners();
-        setupListTouchEvents();
-        setupRecordPlayer();
+        try { resizeCanvas(); } catch(e) {}
+        try { drawBoard(); } catch(e) {}
+        try { setupEventListeners(); } catch(e) {}
+        try { setupListTouchEvents(); } catch(e) {}
+        try { setupRecordPlayer(); } catch(e) {}
         speak('西尔象棋盲棋已启动，红方先行');
     }
 
