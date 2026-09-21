@@ -619,21 +619,81 @@
     }
 
     // 语音播报（同时显示可见文字）
+    // 华为浏览器不支持TTS时，用音效替代
     function speak(text) {
         showMessage(text);
-        if (!synth) return;
-        try {
-            if (currentUtterance) {
-                synth.cancel();
-            }
-            currentUtterance = new SpeechSynthesisUtterance(text);
-            currentUtterance.lang = 'zh-CN';
-            currentUtterance.rate = 1.0;
-            currentUtterance.pitch = 1.0;
-            synth.speak(currentUtterance);
-        } catch (e) {
-            // 语音合成失败，至少文字提示还在
+        // 如果已确认TTS不工作，直接播放提示音
+        if (ttsTested && !ttsWorking) {
+            playNotifySound();
+            return;
         }
+        // 尝试TTS语音合成
+        if (synth) {
+            try {
+                if (currentUtterance) {
+                    synth.cancel();
+                }
+                currentUtterance = new SpeechSynthesisUtterance(text);
+                currentUtterance.lang = 'zh-CN';
+                currentUtterance.rate = 1.0;
+                currentUtterance.pitch = 1.0;
+                currentUtterance.onend = function() {
+                    ttsWorking = true;
+                    if (ttsTimeout) { clearTimeout(ttsTimeout); ttsTimeout = null; }
+                };
+                currentUtterance.onerror = function() {
+                    ttsWorking = false;
+                    if (ttsTimeout) { clearTimeout(ttsTimeout); ttsTimeout = null; }
+                    playNotifySound();
+                };
+                synth.speak(currentUtterance);
+                // 启动超时检测（华为浏览器TTS静默失败）
+                checkTtsWorking();
+                return;
+            } catch (e) {
+                ttsWorking = false;
+                ttsTested = true;
+            }
+        }
+        // TTS不可用，播放提示音
+        playNotifySound();
+    }
+
+    // TTS是否正常工作（首次调用后检测）
+    var ttsWorking = false;
+    var ttsTested = false;
+    var ttsTimeout = null;
+    
+    // 通知提示音（TTS不可用时的替代）
+    function playNotifySound() {
+        initAudioContext();
+        if (!audioContext) return;
+        // 两声清脆的"嘀嘀"
+        [880, 1100].forEach(function(freq, i) {
+            var osc = audioContext.createOscillator();
+            var gain = audioContext.createGain();
+            osc.connect(gain);
+            gain.connect(audioContext.destination);
+            osc.frequency.value = freq;
+            osc.type = 'sine';
+            var t = audioContext.currentTime + i * 0.12;
+            gain.gain.setValueAtTime(0.2, t);
+            gain.gain.exponentialRampToValueAtTime(0.01, t + 0.1);
+            osc.start(t);
+            osc.stop(t + 0.1);
+        });
+    }
+    
+    // 检测TTS是否真的能发声（华为浏览器会静默失败）
+    function checkTtsWorking() {
+        if (ttsTested) return;
+        ttsTested = true;
+        ttsTimeout = setTimeout(function() {
+            if (!ttsWorking) {
+                // 500ms后TTS还没完成，说明不支持，以后用提示音
+                ttsWorking = false;
+            }
+        }, 500);
     }
 
     // 更新状态栏
