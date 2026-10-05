@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- VERSION: 2026-10-05-v30 修复手机无声（真正根因）：百度TTS接口对带第三方Referer的请求返回空文件，导致<audio>报NotSupportedError；现全站禁用Referer（meta + audio.referrerPolicy），并保留v29的本机语音兜底 -->
+<!-- VERSION: 2026-10-05-v31 修复来电/闹铃打断后不恢复：新增打断恢复重试循环（每2秒试一次直到成功）、隐藏页面时静默清理语音与回调、播放代数防新旧回调打架、主动停止不再被误判为系统打断 -->
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
@@ -1794,7 +1794,11 @@
         if (autoPlaying) {
           autoPlayingBeforeHidden = true;
           autoPlaying = false;
+          autoPlayGen++; // v31：作废进行中那一步的回调，防止回前台后新旧两套流程打架
           if (autoPlayTimer) { clearTimeout(autoPlayTimer); autoPlayTimer = null; }
+          // v31：静默清掉正在播/待播的语音（不弹提示、不计失败），回前台由 autoReplay 干净地重开
+          try { stopOnlineTTS(); } catch (e) {}
+          try { clearLocalSpeakQueue(); } catch (e) {}
           const autoBtn = getAutoPlayBtn();
           if (autoBtn) autoBtn.textContent = '继续播放';
           updateMediaSession('paused', '已暂停', '通话结束后自动恢复');
@@ -1803,6 +1807,11 @@
         if (autoPlayingBeforeHidden) {
           autoPlayingBeforeHidden = false;
           setTimeout(() => autoReplay(), 300);
+        }
+        // v31：回前台时顺带唤醒可能被打断的后台保活音频
+        if (keepAliveAudio && keepAliveAudio.paused) {
+          const k = keepAliveAudio.play();
+          if (k && k.catch) k.catch(() => {});
         }
       }
     });
@@ -1845,6 +1854,37 @@
         if (trimmed) onlineQueue.push({ text: trimmed, onEnd: idx === chunks.length - 1 ? onEnd : null });
       });
       playOnlineQueue();
+    }
+
+    // ====== v31 新增：来电/闹铃打断后的自动恢复 ======
+    // 场景：系统来电或闹铃会把 <audio> 强行暂停，而此时页面往往还在前台
+    //（visibilitychange 不触发）。旧逻辑只在 onpause 的瞬间补一次 play()，
+    // 但通话还没结束必然失败，之后无人重试 → 播放从此卡死。
+    // 新逻辑：进入"恢复重试"循环，每 2 秒试一次；页面回前台后第一次成功即恢复；
+    // 连续 90 秒仍失败则放弃（避免无限空转）。
+    let interruptResumeTimer = null;
+    let interruptResumeTries = 0;
+    let intentionalAudioPause = false; // 主动停止/切句不算系统打断，不触发恢复
+    function stopInterruptResume() {
+      if (interruptResumeTimer) { clearInterval(interruptResumeTimer); interruptResumeTimer = null; }
+    }
+    function startInterruptResume() {
+      if (interruptResumeTimer) return; // 已在重试中
+      interruptResumeTries = 0;
+      interruptResumeTimer = setInterval(() => {
+        interruptResumeTries++;
+        if (interruptResumeTries > 45) { stopInterruptResume(); return; } // 45次×2秒=90秒
+        if (document.hidden) return; // 通话中页面在后台，先安静等着
+        if (!onlineAudio || onlineAudio.ended || !onlineAudio.src) { stopInterruptResume(); return; }
+        if (!onlineAudio.paused) { stopInterruptResume(); return; } // 已恢复
+        const p = onlineAudio.play();
+        if (p && p.catch) p.catch(() => {});
+        // 后台保活音频也一并唤醒
+        if (keepAliveAudio && keepAliveAudio.paused) {
+          const k = keepAliveAudio.play();
+          if (k && k.catch) k.catch(() => {});
+        }
+      }, 2000);
     }
 
     // 核心改变：直接用 <audio src> 播放，不走 fetch，绕过 CORS
@@ -1932,12 +1972,19 @@
         onFail('audio错误 code=' + code);
       };
       onlineAudio.onpause = () => {
-        // 如来电/弹窗导致音频被系统暂停，且还在自动播放过程中，尝试恢复
-        if (autoPlaying && !onlineAudio.ended && onlineAudio.currentTime > 0 && onlineAudio.currentTime < onlineAudio.duration - 0.3) {
+        // v31：来电/闹铃等系统打断 → 立即试一次，失败则进入恢复重试循环
+        //（主动停止时 intentionalAudioPause 为真，不算打断）
+        if (intentionalAudioPause) { intentionalAudioPause = false; return; }
+        const midClip = !onlineAudio.ended && onlineAudio.currentTime > 0 &&
+          onlineAudio.currentTime < (onlineAudio.duration || 0) - 0.3;
+        if (midClip) {
           const p = onlineAudio.play();
           if (p && p.catch) p.catch(() => {});
+          startInterruptResume();
         }
       };
+      // v31：成功恢复播放（或正常开始播放）时，停止恢复重试循环
+      onlineAudio.onplay = () => { stopInterruptResume(); };
       // canplaythrough 事件：音频加载完成可以播放
       onlineAudio.oncanplaythrough = () => {
         clearT(); onlineFailCount = 0;
@@ -1968,9 +2015,12 @@
 
     function stopOnlineTTS() {
       onlineQueue = [];
+      // v31：这是"主动"暂停（停止语音/切换引擎/换句子），不应触发打断恢复
+      if (onlineAudio && !onlineAudio.paused) { intentionalAudioPause = true; }
       if (onlineAudio) { onlineAudio.pause(); }
       if (currentAudioBlobUrl) { URL.revokeObjectURL(currentAudioBlobUrl); currentAudioBlobUrl = null; }
       onlinePlaying = false;
+      stopInterruptResume();
     }
 
     // 本地 speechSynthesis（回退方案）——排队模式，不再 cancel 打断长语音
@@ -2052,6 +2102,7 @@
       u.onerror = (e) => {
         clearLocalWatchdog();
         localSpeaking = false;
+        if (localClearing) return; // v31：主动清队列引发的取消，不算失败
         localFailCount++;
         if (e.error) { speechDiag.lastError = 'local错误:' + e.error; updateSpeechDiagnostics(); }
         maybeAbandonLocal(item);
@@ -2061,6 +2112,7 @@
       u.onend = () => {
         clearLocalWatchdog();
         localSpeaking = false;
+        if (localClearing) return; // v31：主动清队列引发的取消，不触发回调也不计失败
         // v29：静音"假成功"检测——部分手机内置浏览器会瞬间触发结束事件，却一点声音都没有。
         // 正常朗读 4 个字以上不可能在 300ms 内结束，据此判定为失败并累计，交给 maybeAbandonLocal 处理。
         if (Date.now() - localStartedAt < 300 && item.text.length >= 4) {
@@ -2102,11 +2154,14 @@
     }
 
     // 立即清空本地语音队列（用于 stopSpeech 或用户主动切换/重开）
+    let localClearing = false; // v31：清队列时的 cancel 不应被当成"失败/静音"
     function clearLocalSpeakQueue() {
+      localClearing = true;
       localSpeakQueue = [];
       localSpeaking = false;
       clearLocalWatchdog();
       if ('speechSynthesis' in window) speechSynthesis.cancel();
+      setTimeout(() => { localClearing = false; }, 400);
     }
 
     // 更新 UI 上语音引擎按钮的显示
@@ -2962,6 +3017,7 @@
     }
 
     let autoPlaying = false;
+    let autoPlayGen = 0; // v31：播放代数——中断/重启后旧一步的回调凭 gen 失效，防止重复排程
     function getAutoPlayBtn() {
       return document.getElementById('autoPlayBtn');
     }
@@ -2970,6 +3026,7 @@
       const autoBtn = btn || getAutoPlayBtn();
       if (autoPlaying) {
         autoPlaying = false;
+        autoPlayGen++;
         if (autoPlayTimer) { clearTimeout(autoPlayTimer); autoPlayTimer = null; }
         if (autoBtn) autoBtn.textContent = '自动播放';
         speak('已停止自动播放');
@@ -2995,6 +3052,7 @@
         drawBoard();
       }
       autoPlaying = true;
+      autoPlayGen++;
       if (autoBtn) autoBtn.textContent = '停止播放';
       speak('开始自动播放');
       updateMediaSession('playing', '自动播放中', '连续听读棋谱');
@@ -3003,6 +3061,7 @@
 
     function autoPlayStep() {
       if (!autoPlaying) return;
+      const gen = autoPlayGen; // v31：本步的"代数"，中断重启后回调作废
       if (replayIndex >= replayMoves.length - 1) {
         autoPlaying = false;
         const autoBtn = getAutoPlayBtn();
@@ -3015,7 +3074,7 @@
       // 播报完当前手的坐标+方位描述后，再进入下一手
       let proceeded = false;
       const nextStep = () => {
-        if (!autoPlaying || proceeded) return;
+        if (!autoPlaying || proceeded || gen !== autoPlayGen) return;
         proceeded = true;
         // 使用用户设置的每步间隔（默认 1 分钟），同时保留最短呼吸间隔
         const breathe = Math.max(300, 1200 / speechRate);
@@ -3025,6 +3084,7 @@
       // 12秒安全兜底：即使语音回调未触发也继续播放（本地TTS较慢时也能兜底）
       const safetyTimer = setTimeout(nextStep, 12000);
       replayNext(null, () => {
+        if (gen !== autoPlayGen) { clearTimeout(safetyTimer); return; } // v31：已被中断作废
         clearTimeout(safetyTimer);
         nextStep();
       });
