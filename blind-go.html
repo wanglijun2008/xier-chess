@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- VERSION: 2026-10-05-v28 修复手机无声：默认恢复百度TTS优先、清除v27自动写入的本地TTS偏好、本地TTS加看门狗防卡死并自动切回 -->
+<!-- VERSION: 2026-10-05-v29 修复手机无声：本机语音可用性不再看getVoices是否就绪、在线语音失败立即切本机语音、手机端探测失败主动切换、本机语音静音假成功检测、首次手势预热语音合成 -->
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
@@ -1400,6 +1400,8 @@
     // 在用户点击事件的同步上下文中播放一段静音音频，激活 <audio> 元素的播放权限
     let audioUnlocked = false;
     function unlockAudio(btn) {
+      // v29：无论音频是否已解锁，都在用户手势内预热本机语音（幂等，只会执行一次）
+      primeLocalSpeech();
       if (audioUnlocked) {
         showSpeechBubble('音频已解锁，可直接点测试语音');
         return;
@@ -1486,6 +1488,27 @@
           if (speechSynthesis.speaking && speechSynthesis.paused) speechSynthesis.resume();
         } catch(e) {}
       }, 3000);
+    }
+
+    // ====== v29 新增：首次用户手势内预热本机语音 ======
+    // iOS Safari 和部分安卓浏览器要求"第一次 speak 必须发生在用户手势的同步上下文中"，
+    // 之后程序触发的播报才被允许。否则后续由定时器/回放触发的本地播报会被静默忽略——
+    // 这正是"点了播放却一直没声音"的高发原因。
+    // 预热用的是一段不可闻的空文本，用户听不到任何多余声音。
+    let speechPrimed = false;
+    function primeLocalSpeech() {
+      if (speechPrimed) return;
+      if (!('speechSynthesis' in window) || typeof SpeechSynthesisUtterance === 'undefined') return;
+      speechPrimed = true;
+      try {
+        const u = new SpeechSynthesisUtterance(' ');
+        u.lang = 'zh-CN';
+        u.volume = 0.01;
+        u.rate = 2.0;
+        speechSynthesis.speak(u);
+        speechDiag.lastError = '本机语音已预热';
+        updateSpeechDiagnostics();
+      } catch (e) {}
     }
 
     // 显示语音气泡（可视反馈，即使语音不出声用户也能看到内容）
@@ -1710,6 +1733,27 @@
       audio.src = testUrl;
       audio.load();
     }
+
+    // ====== v29 新增：手机端在线语音不可用时，主动切到"本机语音" ======
+    // 探测本身有小概率误报（手机上无手势时浏览器可能不给加载音频），
+    // 但与其让用户对着"没声音"的界面反复重试，不如先切到不依赖网络的本机语音；
+    // 若本机语音真的坏了，看门狗/静音检测会在 1~2 句内判死并自动切回在线语音。
+    function autoSwitchToLocalIfOnlineUnavailable(ok) {
+      try {
+        if (ok !== false) return;
+        if (!isLikelyMobile) return;
+        if (!isLocalTTSAvailable()) return;
+        if (ttsEngine === 'local') return;
+        ttsEngine = 'local';
+        ttsPref.engine = 'local';
+        saveTTSPref(ttsPref);
+        localFailCount = 0;
+        localTTSDead = false;
+        updateTTSEngineUI();
+        updateSpeechDiagnostics();
+        showSpeechBubble('在线语音不可用，已自动切换为「本机语音」');
+      } catch (e) {}
+    }
     
     // 页面加载后自动检测
     window.addEventListener('DOMContentLoaded', async () => {
@@ -1721,7 +1765,7 @@
         await importPresetGamesIfNeeded();
       } catch (e) { console.error('棋谱数据库初始化失败:', e); }
       detectTTSSource(); // 异步检测，不影响页面初始化
-      checkBaiduTTS();
+      checkBaiduTTS((ok) => autoSwitchToLocalIfOnlineUnavailable(ok));
       // 同步 UI 上的引擎标签与移动网络模式
       updateTTSEngineUI();
       updateMobileModeUI();
@@ -1808,8 +1852,8 @@
 
       let timeoutTimer = null;
       const clearT = () => { if (timeoutTimer) { clearTimeout(timeoutTimer); timeoutTimer = null; } };
-      const localTTSAvailable = ('speechSynthesis' in window) &&
-        (() => { try { return speechSynthesis.getVoices().length > 0 || speechSynthesis.getVoices().length === -1; } catch(e) { return false; } })();
+      // v29：改为只看本机语音 API 是否存在，不再看 getVoices() 是否已就绪（详见 isLocalTTSAvailable）
+      const localTTSAvailable = isLocalTTSAvailable();
 
       const onFail = (reason) => {
         clearT();
@@ -1820,7 +1864,7 @@
         updateSpeechDiagnostics();
 
         // 超时/网络类错误且本地语音可用时，尽早切换，避免长时间无声音（移动网络场景）
-        const isNetworkError = /超时|网络|加载|被拒|错误|error|network/i.test(reasonStr);
+        const isNetworkError = /超时|网络|加载|被拒|失败|错误|error|network|notsupported|failed to load/i.test(reasonStr);
 
         if (onlineFailCount >= 3 || (isNetworkError && onlineFailCount >= 1 && localTTSAvailable)) {
           if (localTTSAvailable) {
@@ -1831,7 +1875,8 @@
             updateTTSEngineUI();
             speakLocal(text, onEnd); // 把当前句子的结束回调传给本地TTS，避免自动播放卡住
           } else {
-            showSpeechBubble(reasonStr + '，10秒后重试');
+            // v29：只有浏览器完全没有语音合成能力时才会走到这里，提示说清楚原因
+            showSpeechBubble('此浏览器不支持本机语音，在线语音10秒后重试');
             setTimeout(() => {
               onlineFailCount = 0;
               ttsEngine = 'baidu';
@@ -1923,6 +1968,20 @@
     let localTTSDead = false; // 本地TTS本会话已判定不可用（手机端静音卡死的高发问题）
     let localWatchdog = null; // 看门狗定时器
 
+    // ====== v29 关键修复：本机语音"是否可用"的判断标准 ======
+    // 旧逻辑要求 speechSynthesis.getVoices().length > 0 才算可用，但手机浏览器首次打开时
+    // 语音列表是异步加载的，此刻 getVoices() 返回空数组 → 被误判为"本机语音不可用"。
+    // 结果是：在线语音加载失败（NotSupportedError）后既不切换本机语音，也不报错给用户，
+    // 只反复弹"10秒后重试"，手机从此全程无声。这就是本次手机无声的根因。
+    // 新逻辑：只要浏览器提供语音合成 API 就认为"可尝试"，真的坏掉由看门狗和
+    // 静音假成功检测判死（localTTSDead），再自动切回在线语音。
+    function isLocalTTSAvailable() {
+      if (!('speechSynthesis' in window)) return false;
+      if (typeof SpeechSynthesisUtterance === 'undefined') return false;
+      if (localTTSDead) return false;
+      return true;
+    }
+
     function clearLocalWatchdog() {
       if (localWatchdog) { clearTimeout(localWatchdog); localWatchdog = null; }
     }
@@ -1986,9 +2045,20 @@
         maybeAbandonLocal(item);
         setTimeout(playLocalQueue, 100);
       };
+      const localStartedAt = Date.now();
       u.onend = () => {
         clearLocalWatchdog();
         localSpeaking = false;
+        // v29：静音"假成功"检测——部分手机内置浏览器会瞬间触发结束事件，却一点声音都没有。
+        // 正常朗读 4 个字以上不可能在 300ms 内结束，据此判定为失败并累计，交给 maybeAbandonLocal 处理。
+        if (Date.now() - localStartedAt < 300 && item.text.length >= 4) {
+          localFailCount++;
+          speechDiag.lastError = '本机语音静音(瞬间结束) ' + localFailCount + '次';
+          updateSpeechDiagnostics();
+          maybeAbandonLocal(item);
+          setTimeout(playLocalQueue, 100);
+          return;
+        }
         localFailCount = 0; // 成功播出一声即复位计数
         if (item.onEnd) { try { item.onEnd(); } catch(e){} }
         // 立即处理队列中的下一条
