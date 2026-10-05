@@ -1,8 +1,12 @@
 <!DOCTYPE html>
-<!-- VERSION: 2026-10-05-v29 修复手机无声：本机语音可用性不再看getVoices是否就绪、在线语音失败立即切本机语音、手机端探测失败主动切换、本机语音静音假成功检测、首次手势预热语音合成 -->
+<!-- VERSION: 2026-10-05-v30 修复手机无声（真正根因）：百度TTS接口对带第三方Referer的请求返回空文件，导致<audio>报NotSupportedError；现全站禁用Referer（meta + audio.referrerPolicy），并保留v29的本机语音兜底 -->
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
+  <!-- 关键：百度TTS接口会拒绝携带第三方 Referer 的请求（返回 0 字节 HTML），
+       浏览器播放 <audio> 时默认会带上本站 Referer，于是手机端永远加载不出语音；
+       这里全站禁用 Referer，让请求变成"无来源"，百度即正常返回音频。 -->
+  <meta name="referrer" content="no-referrer">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>围棋听棋 - 盲人无障碍围棋软件（公开免费版）</title>
   <!-- PWA 配置 -->
@@ -1419,6 +1423,8 @@
         onlineAudio = document.createElement('audio');
         onlineAudio.style.display = 'none';
         onlineAudio.setAttribute('playsinline', 'true');
+        // v30：不带 Referer，否则百度TTS接口会返回空文件（手机无声的根因）
+        try { onlineAudio.referrerPolicy = 'no-referrer'; } catch (e) {}
         document.body.appendChild(onlineAudio);
       }
       onlineAudio.volume = 0.01;  // 几乎静音
@@ -1686,6 +1692,8 @@
       if (baiduTTSChecked) { onResult && onResult(baiduTTSAvailable); return; }
       baiduTTSChecked = true;
       const audio = document.createElement('audio');
+      // v30：探测请求同样不能带 Referer，否则百度返回空文件 → 会把可用误判为不可用
+      try { audio.referrerPolicy = 'no-referrer'; } catch (e) {}
       const testUrl = 'https://fanyi.baidu.com/gettts?lan=zh&text=%E6%B5%8B%E8%AF%95&spd=5&pit=5&vol=5&per=0';
       let gotCanPlay = false;
       let gotEnded = false;
@@ -1875,15 +1883,17 @@
             updateTTSEngineUI();
             speakLocal(text, onEnd); // 把当前句子的结束回调传给本地TTS，避免自动播放卡住
           } else {
-            // v29：只有浏览器完全没有语音合成能力时才会走到这里，提示说清楚原因
-            showSpeechBubble('此浏览器不支持本机语音，在线语音10秒后重试');
+            // 两种情况：浏览器没有语音合成能力，或本机语音已在本会话被判为不可用
+            showSpeechBubble(localTTSDead
+              ? '本机语音不可用，正在重试在线语音…'
+              : '此浏览器没有本机语音，正在重试在线语音…');
             setTimeout(() => {
               onlineFailCount = 0;
               ttsEngine = 'baidu';
               // 重试时把这句放回队首，不能丢——丢了会导致回放"跳句"或卡住
               onlineQueue.unshift({ text: text, onEnd: onEnd || null });
               playOnlineQueue();
-            }, 10000);
+            }, 5000);
           }
           return;
         }
@@ -1897,6 +1907,8 @@
         onlineAudio.style.display = 'none';
         onlineAudio.volume = 1.0;  // 最大音量
         onlineAudio.preload = 'auto';
+        // v30：不带 Referer，否则百度TTS接口返回空文件（手机无声的根因）
+        try { onlineAudio.referrerPolicy = 'no-referrer'; } catch (e) {}
         document.body.appendChild(onlineAudio);
       }
 
@@ -7181,6 +7193,8 @@
       if (!onlineAudio) {
         onlineAudio = document.createElement('audio');
         onlineAudio.style.display = 'none';
+        // v30：不带 Referer，否则百度TTS接口返回空文件（手机无声的根因）
+        try { onlineAudio.referrerPolicy = 'no-referrer'; } catch (e) {}
         document.body.appendChild(onlineAudio);
       }
       const silentWav = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
