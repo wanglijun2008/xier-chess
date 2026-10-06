@@ -7,7 +7,7 @@
     <meta name="mobile-web-app-capable" content="yes">
     <title>西尔象棋盲棋</title>
     <link rel="manifest" href="manifest.json">
-    <link rel="stylesheet" href="style.css?v=20261006b">
+    <link rel="stylesheet" href="style.css?v=20261007a">
 </head>
 <body>
     <div id="app">
@@ -84,43 +84,56 @@
             <div id="record-games-area">
                 <div class="record-games-title">📋 内置棋谱（点击直接播放）</div>
                 <div id="builtin-games-list" class="games-list"></div>
-                <div class="record-games-title" id="saved-games-title" style="display:none;">💾 我的棋谱（导入自动保存）</div>
+                <div class="record-games-title" id="saved-games-title" style="display:none;">
+                    <span>💾 我的棋谱（导入自动保存）</span>
+                    <button id="saved-games-clear" class="mini-btn" aria-label="清空我的棋谱">🗑 清空</button>
+                </div>
                 <div id="saved-games-list" class="games-list"></div>
             </div>
             <div id="record-input-area">
-                <textarea id="record-text" placeholder="粘贴棋谱，如：&#10;1. 炮二平五 马8进7&#10;2. 马二进三 车9平8&#10;&#10;也支持每行一步：炮2平5&#10;或从文件导入 ↓" aria-label="棋谱文本"></textarea>
-                <div style="display:flex;gap:8px;">
+                <textarea id="record-text" placeholder="粘贴棋谱，如：&#10;1. 炮二平五 马8进7&#10;2. 马二进三 车9平8&#10;&#10;也支持每行一步：炮2平5" aria-label="棋谱文本"></textarea>
+                <div class="record-btn-row">
                     <button id="record-parse" aria-label="解析棋谱" style="flex:1;">解析棋谱</button>
-                    <button id="record-file" aria-label="从文件导入" style="flex:0 0 auto;background:#FF9800;">📂文件</button>
+                    <button id="record-file" aria-label="导入棋谱文件" style="background:#FF9800;">📂 导入棋谱</button>
                 </div>
-                <input type="file" id="record-file-input" accept=".txt,.pgn,.xcc,.cchess,.txt" style="display:none;">
+                <input type="file" id="record-file-input" accept=".txt,.pgn,.xcc,.cchess" style="display:none;">
             </div>
             <div id="record-info" style="display:none;"></div>
             <div id="record-controls" style="display:none;">
+                <!-- 进度条：可拖动，跳到任意一步 -->
                 <div id="record-progress">
-                    <span id="record-step-info">第 0 / 0 步</span>
+                    <input type="range" id="record-seek" min="0" max="0" step="1" value="0"
+                           aria-label="回放进度，左右拖动可跳到任意一步">
+                    <div id="record-step-info">第 0 / 0 步</div>
                 </div>
+                <!-- 播放控制：播放与暂停分开，另加快退/快进/开头/末尾 -->
                 <div id="record-buttons">
-                    <button id="record-prev" aria-label="上一步">◀上步</button>
-                    <button id="record-play" aria-label="播放">▶播放</button>
-                    <button id="record-next" aria-label="下一步">下步▶</button>
+                    <button id="record-first" aria-label="回到开头">⏮ 开头</button>
+                    <button id="record-back10" aria-label="快退10步">⏪ 退10步</button>
+                    <button id="record-prev" aria-label="上一步">◀ 上一步</button>
+                    <button id="record-play" class="rec-primary" aria-label="播放">▶ 播放</button>
+                    <button id="record-pause" aria-label="暂停">⏸ 暂停</button>
+                    <button id="record-next" aria-label="下一步">下一步 ▶</button>
+                    <button id="record-fwd10" aria-label="快进10步">快进10步 ⏩</button>
+                    <button id="record-last" aria-label="跳到末尾">末尾 ⏭</button>
                 </div>
+                <!-- 速度档位 -->
                 <div id="record-speed">
-                    <span>慢</span>
-                    <input type="range" id="record-speed-range" min="500" max="5000" step="500" value="2000" aria-label="播放速度">
-                    <span>快</span>
+                    <div class="speed-title">每一步之间停多久（播完一句后再等）</div>
+                    <div id="record-speed-presets"></div>
+                    <button id="record-tts-test" class="rec-test" aria-label="测试语音">🔊 测试语音（听不到声音时点这里）</button>
                 </div>
             </div>
         </div>
     </div>
 
-    <script src="chess.js?v=20261006b"></script>
-    <script src="record-player.js?v=20261006b"></script>
-    <script src="games-builtin.js?v=20261006b"></script>
-    <script src="app.js?v=20261006b"></script>
+    <script src="chess.js?v=20261007a"></script>
+    <script src="record-player.js?v=20261007a"></script>
+    <script src="games-builtin.js?v=20261007a"></script>
+    <script src="app.js?v=20261007a"></script>
     <script>
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('service-worker.js?v=20261006b').then(function(reg) {
+            navigator.serviceWorker.register('service-worker.js?v=20261007a').then(function(reg) {
                 // 检测到新版本时立即刷新
                 if (reg.waiting) reg.waiting.postMessage({type: 'SKIP_WAITING'});
             });
