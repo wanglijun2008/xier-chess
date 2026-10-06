@@ -7,7 +7,7 @@
     <meta name="mobile-web-app-capable" content="yes">
     <title>西尔象棋盲棋</title>
     <link rel="manifest" href="manifest.json">
-    <link rel="stylesheet" href="style.css?v=20261006a">
+    <link rel="stylesheet" href="style.css?v=20261006b">
 </head>
 <body>
     <div id="app">
@@ -80,6 +80,13 @@
                 <span>棋谱回放</span>
                 <button id="record-close" aria-label="关闭">✕</button>
             </div>
+            <!-- 内置棋谱库 + 我的棋谱 -->
+            <div id="record-games-area">
+                <div class="record-games-title">📋 内置棋谱（点击直接播放）</div>
+                <div id="builtin-games-list" class="games-list"></div>
+                <div class="record-games-title" id="saved-games-title" style="display:none;">💾 我的棋谱（导入自动保存）</div>
+                <div id="saved-games-list" class="games-list"></div>
+            </div>
             <div id="record-input-area">
                 <textarea id="record-text" placeholder="粘贴棋谱，如：&#10;1. 炮二平五 马8进7&#10;2. 马二进三 车9平8&#10;&#10;也支持每行一步：炮2平5&#10;或从文件导入 ↓" aria-label="棋谱文本"></textarea>
                 <div style="display:flex;gap:8px;">
@@ -107,12 +114,13 @@
         </div>
     </div>
 
-    <script src="chess.js?v=20261006a"></script>
-    <script src="record-player.js?v=20261006a"></script>
-    <script src="app.js?v=20261006a"></script>
+    <script src="chess.js?v=20261006b"></script>
+    <script src="record-player.js?v=20261006b"></script>
+    <script src="games-builtin.js?v=20261006b"></script>
+    <script src="app.js?v=20261006b"></script>
     <script>
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('service-worker.js?v=20261006a').then(function(reg) {
+            navigator.serviceWorker.register('service-worker.js?v=20261006b').then(function(reg) {
                 // 检测到新版本时立即刷新
                 if (reg.waiting) reg.waiting.postMessage({type: 'SKIP_WAITING'});
             });

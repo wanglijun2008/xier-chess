@@ -1,4 +1,4 @@
-const CACHE_NAME = 'chinese-chess-v8';
+const CACHE_NAME = 'chinese-chess-v9';
 const urlsToCache = [
     '/',
     '/index.html',
@@ -6,6 +6,7 @@ const urlsToCache = [
     '/chess.js',
     '/app.js',
     '/record-player.js',
+    '/games-builtin.js',
     '/manifest.json',
     '/icon-512.png'
 ];

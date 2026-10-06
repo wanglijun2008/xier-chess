@@ -237,7 +237,122 @@
         document.getElementById('record-controls').style.display = 'none';
         document.getElementById('record-input-area').style.display = 'flex';
         document.getElementById('record-text').value = '';
-        speak('请粘贴或输入棋谱，每行一步');
+        buildGameLists();
+        var nBuiltin = (typeof BUILTIN_GAMES !== 'undefined') ? BUILTIN_GAMES.length : 0;
+        var nSaved = getSavedGames().length;
+        speak('棋谱回放。内置棋谱' + nBuiltin + '盘' +
+              (nSaved > 0 ? '，我的棋谱' + nSaved + '盘' : '') +
+              '。点击棋谱名称即可播放，或在下方粘贴新棋谱。');
+    }
+
+    // ========== 棋谱库（内置 + 自动保存） ==========
+    function getSavedGames() {
+        try {
+            var raw = localStorage.getItem('xiangqiSavedGames');
+            return raw ? JSON.parse(raw) : [];
+        } catch (e) { return []; }
+    }
+
+    function saveGamesList(list) {
+        try { localStorage.setItem('xiangqiSavedGames', JSON.stringify(list.slice(0, 50))); } catch (e) {}
+    }
+
+    // 生成一个棋谱按钮（deletable 为 true 时附带删除按钮）
+    function makeGameButton(name, text, steps, deletable) {
+        var wrap = document.createElement('div');
+        wrap.className = 'game-item';
+
+        var btn = document.createElement('button');
+        btn.className = 'game-btn';
+        btn.textContent = steps ? (name + ' ' + steps + '步') : name;
+        btn.setAttribute('aria-label', '播放棋谱：' + name);
+        btn.addEventListener('click', function() {
+            loadGameToPlay(name, text);
+        });
+        wrap.appendChild(btn);
+
+        if (deletable) {
+            var del = document.createElement('button');
+            del.className = 'game-del';
+            del.textContent = '删';
+            del.setAttribute('aria-label', '删除棋谱：' + name);
+            del.addEventListener('click', function() {
+                var saved = getSavedGames().filter(function(g) {
+                    return !(g.name === name && g.text === text);
+                });
+                saveGamesList(saved);
+                buildGameLists();
+                speak('已删除 ' + name);
+            });
+            wrap.appendChild(del);
+        }
+        return wrap;
+    }
+
+    // 构建内置棋谱和我的棋谱列表
+    function buildGameLists() {
+        var builtinEl = document.getElementById('builtin-games-list');
+        var savedEl = document.getElementById('saved-games-list');
+        var savedTitle = document.getElementById('saved-games-title');
+        if (!builtinEl || !savedEl) return;
+
+        builtinEl.innerHTML = '';
+        if (typeof BUILTIN_GAMES !== 'undefined' && BUILTIN_GAMES.length) {
+            BUILTIN_GAMES.forEach(function(g) {
+                builtinEl.appendChild(makeGameButton(g.name, g.text, 0, false));
+            });
+        }
+
+        var saved = getSavedGames();
+        savedEl.innerHTML = '';
+        if (saved.length) {
+            savedTitle.style.display = '';
+            saved.forEach(function(g) {
+                savedEl.appendChild(makeGameButton(g.name, g.text, g.steps || 0, true));
+            });
+        } else {
+            savedTitle.style.display = 'none';
+        }
+    }
+
+    // 从棋谱库点选加载
+    var pendingGameName = null;
+    function loadGameToPlay(name, text) {
+        pendingGameName = name;
+        document.getElementById('record-text').value = text;
+        handleRecordParse();
+    }
+
+    // 从棋谱文本推断名称（优先用 PGN 的 Event 头）
+    function deriveGameName(text) {
+        var m = text.match(/\[Event\s+"([^"]*)"\]/);
+        if (m && m[1].trim()) return m[1].trim();
+        var d = new Date();
+        return '导入棋谱 ' + (d.getMonth() + 1) + '月' + d.getDate() + '日';
+    }
+
+    // 导入的棋谱自动保存到"我的棋谱"（内置棋谱不重复保存）
+    function autoSaveGame(text, total) {
+        try {
+            if (typeof BUILTIN_GAMES !== 'undefined') {
+                for (var i = 0; i < BUILTIN_GAMES.length; i++) {
+                    if (BUILTIN_GAMES[i].text === text) return;
+                }
+            }
+            var saved = getSavedGames();
+            for (var j = 0; j < saved.length; j++) {
+                if (saved[j].text === text) return; // 已经保存过
+            }
+            var name = deriveGameName(text);
+            var base = name, k = 2;
+            while (saved.some(function(g) { return g.name === name; })) {
+                name = base + '（' + k + '）';
+                k++;
+            }
+            saved.unshift({ name: name, text: text, steps: total });
+            saveGamesList(saved);
+            buildGameLists();
+        } catch (e) {}
     }
 
     function closeRecordModal() {
@@ -275,7 +390,10 @@
             return;
         }
 
-        var msg = '成功解析' + result.total + '步棋';
+        var msg = pendingGameName
+            ? (pendingGameName + '，共' + result.total + '步棋')
+            : ('成功解析' + result.total + '步棋');
+        pendingGameName = null;
         if (result.errors.length > 0) {
             msg += '，' + result.errors.length + '步有误';
             infoEl.textContent = msg + '：' + result.errors.slice(0, 3).join('；');
@@ -283,6 +401,9 @@
             infoEl.textContent = msg;
         }
         speak(msg);
+
+        // 导入的棋谱自动保存到"我的棋谱"，下次打开不用再导入
+        autoSaveGame(text, result.total);
 
         // 显示控制按钮，隐藏输入区
         document.getElementById('record-input-area').style.display = 'none';
