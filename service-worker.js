@@ -1,4 +1,4 @@
-const CACHE_NAME = 'chinese-chess-v9';
+const CACHE_NAME = 'chinese-chess-v10';
 const urlsToCache = [
     '/',
     '/index.html',
