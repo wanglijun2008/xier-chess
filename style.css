@@ -463,26 +463,76 @@ body {
     gap: 12px;
 }
 
+/* 回放进度：可拖动跳步 */
 #record-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+#record-seek {
+    width: 100%;
+    height: 36px;              /* 触摸热区加高，方便拖动 */
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+    outline: none;
+}
+
+#record-seek::-webkit-slider-runnable-track {
+    height: 10px;
+    background: #555;
+    border-radius: 5px;
+}
+
+#record-seek::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 32px;
+    height: 32px;
+    margin-top: -11px;
+    background: #4CAF50;
+    border: 3px solid #fff;
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+#record-seek::-moz-range-track {
+    height: 10px;
+    background: #555;
+    border-radius: 5px;
+}
+
+#record-seek::-moz-range-thumb {
+    width: 30px;
+    height: 30px;
+    background: #4CAF50;
+    border: 3px solid #fff;
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+#record-step-info {
     text-align: center;
     font-size: 15px;
     color: #ccc;
 }
 
+/* 播放控制：两行四列，按钮够大好点 */
 #record-buttons {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
     gap: 8px;
-    justify-content: center;
 }
 
 #record-buttons button {
-    flex: 1;
-    height: 44px;
+    min-height: 48px;
+    padding: 4px 2px;
     background: #3a3a3a;
     border: 2px solid #555;
     border-radius: 8px;
     color: #fff;
-    font-size: 15px;
+    font-size: 13px;
+    line-height: 1.25;
     cursor: pointer;
 }
 
@@ -490,33 +540,96 @@ body {
     background: #4a4a4a;
 }
 
-#record-buttons button.playing {
+#record-buttons button.rec-primary {
+    background: #4CAF50;
+    border-color: #4CAF50;
+    font-weight: bold;
+}
+
+#record-buttons button.rec-primary.playing {
     background: #FF9800;
     border-color: #FF9800;
 }
 
+/* 速度档位 */
 #record-speed {
     display: flex;
-    align-items: center;
+    flex-direction: column;
     gap: 8px;
+}
+
+#record-speed .speed-title {
     font-size: 13px;
     color: #888;
 }
 
-#record-speed input[type="range"] {
-    flex: 1;
-    height: 6px;
-    -webkit-appearance: none;
-    background: #555;
-    border-radius: 3px;
-    outline: none;
+#record-speed-presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
 }
 
-#record-speed input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    width: 20px;
-    height: 20px;
+.speed-btn {
+    flex: 1 1 28%;
+    min-height: 46px;
+    background: #3a3a3a;
+    border: 2px solid #555;
+    border-radius: 8px;
+    color: #fff;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.speed-btn.active {
+    background: #2196F3;
+    border-color: #2196F3;
+    font-weight: bold;
+}
+
+#record-tts-test {
+    min-height: 46px;
+    background: #3a3a3a;
+    border: 2px dashed #777;
+    border-radius: 8px;
+    color: #FFD700;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+/* 解析棋谱 / 导入棋谱 一行两键 */
+.record-btn-row {
+    display: flex;
+    gap: 8px;
+}
+
+.record-btn-row button {
+    height: 42px;
     background: #4CAF50;
-    border-radius: 50%;
+    border: none;
+    border-radius: 8px;
+    color: #fff;
+    font-size: 15px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.record-btn-row button:active {
+    background: #388E3C;
+}
+
+/* "我的棋谱"标题行 + 清空按钮 */
+.record-games-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.mini-btn {
+    padding: 6px 12px;
+    background: #3a3a3a;
+    border: 1px solid #666;
+    border-radius: 6px;
+    color: #ff8a80;
+    font-size: 13px;
     cursor: pointer;
 }
