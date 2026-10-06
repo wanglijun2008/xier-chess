@@ -66,6 +66,7 @@ class ChessRecordPlayer {
                 if (res.success) {
                     this.moves.push({
                         raw: raw,
+                        message: res.message, // 标准播报文本（拖动/快进后播报这一步用）
                         fromRow: move.fromRow,
                         fromCol: move.fromCol,
                         toRow: move.toRow,
@@ -134,13 +135,19 @@ class ChessRecordPlayer {
     }
 
     // 执行第 index 步（0-based）
-    playMove(index) {
+    // silent=true 时不播报（拖动进度条/快进跳转时用，避免把中间的每一步都念一遍）
+    playMove(index, silent) {
         if (index < 0 || index >= this.moves.length) return false;
         const m = this.moves[index];
         const result = this.game.movePieceByCoords(m.fromRow, m.fromCol, m.toRow, m.toCol);
         if (result.success) {
             this.current = index + 1;
-            if (this.on.move) this.on.move(m, result, index + 1, this.moves.length);
+            // on.move 若返回 Promise（表示这一句还没播完），自动播放会等它播完再计时
+            this._pendingWait = null;
+            if (this.on.move) {
+                const r = this.on.move(m, result, index + 1, this.moves.length, false, !!silent);
+                if (r && typeof r.then === 'function') this._pendingWait = r;
+            }
             return true;
         }
         return false;
@@ -170,18 +177,30 @@ class ChessRecordPlayer {
         return false;
     }
 
-    // 跳到指定步
+    // 跳到指定步（拖动进度条用）：静默推演，不逐步播报
     jumpTo(index) {
         this.stop();
-        // 先回到初始状态
-        while (this.current > 0) {
-            this.game.undo();
-            this.current--;
+        index = Math.max(0, Math.min(index, this.moves.length));
+        if (index !== this.current) {
+            // 先回到初始状态
+            while (this.current > 0) {
+                this.game.undo();
+                this.current--;
+            }
+            // 静默走到目标
+            for (let i = 0; i < index; i++) {
+                if (!this.playMove(i, true)) break;
+            }
         }
-        // 逐步走到目标
-        for (let i = 0; i < index && i < this.moves.length; i++) {
-            if (!this.playMove(i)) break;
-        }
+        if (this.on.seeked) this.on.seeked(this.current, this.moves.length);
+    }
+
+    // 快进/快退 n 步（n 为负数表示后退）
+    skip(n) {
+        const target = Math.max(0, Math.min(this.current + n, this.moves.length));
+        const moved = target - this.current;
+        this.jumpTo(target);
+        return moved;
     }
 
     // 自动播放
@@ -204,14 +223,27 @@ class ChessRecordPlayer {
             return;
         }
         this.next();
-        if (this.playing) {
-            this.timer = setTimeout(() => this._tick(), this.speed);
+        if (!this.playing) return;
+        const self = this;
+        const wait = this._pendingWait;
+        this._pendingWait = null;
+        // 先等这一句播报完（若语音可用），再停设定的间隔，然后走下一步。
+        // 这样"2秒"就是"播完后再停2秒"，不会把话截断，跟摆时也不抢跑。
+        const startNext = function () {
+            if (!self.playing) return;
+            self.timer = setTimeout(function () { self._tick(); }, self.speed);
+        };
+        if (wait && typeof wait.then === 'function') {
+            wait.then(startNext, startNext);
+        } else {
+            startNext();
         }
     }
 
     // 暂停
     pause() {
         this.playing = false;
+        this._pendingWait = null;
         if (this.timer) {
             clearTimeout(this.timer);
             this.timer = null;
@@ -222,6 +254,7 @@ class ChessRecordPlayer {
     // 停止
     stop() {
         this.playing = false;
+        this._pendingWait = null;
         if (this.timer) {
             clearTimeout(this.timer);
             this.timer = null;
@@ -229,9 +262,11 @@ class ChessRecordPlayer {
         if (this.on.playState) this.on.playState(false);
     }
 
-    // 设置速度（毫秒/步）
+    // 设置速度（毫秒/步，播完一句后再等这么久）
     setSpeed(ms) {
-        this.speed = Math.max(500, Math.min(5000, ms));
+        ms = parseInt(ms, 10);
+        if (isNaN(ms)) return;
+        this.speed = Math.max(500, Math.min(600000, ms));
     }
 
     // 获取进度信息
