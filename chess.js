@@ -511,13 +511,19 @@ class ChineseChess {
         if (!pieceName) return null;
 
         // 提取起始列（数字1-9）
+        // "前炮平五 / 后马进3"等不带列号的着法：列号为 null，靠前/中/后限定定位
         let rest = text.substring(pieceName.length);
+        let fromUserCol = null;
         const colMatch = rest.match(/^([1-9])/);
-        if (!colMatch) return null;
-        const fromUserCol = parseInt(colMatch[1], 10);
+        if (colMatch) {
+            fromUserCol = parseInt(colMatch[1], 10);
+            rest = rest.substring(1);
+        } else if (!qualifier) {
+            // 既无列号也无前/中/后限定，无法定位棋子
+            return null;
+        }
 
         // 提取动作
-        rest = rest.substring(1);
         const actionMatch = rest.match(/^([进退平])/);
         if (!actionMatch) return null;
         const action = actionMatch[1];
@@ -534,32 +540,56 @@ class ChineseChess {
     resolveVoiceMove(cmd) {
         if (!cmd) return null;
         const color = this.currentPlayer;
-        const fromCol = this.userToInternalCol(cmd.fromUserCol, color);
-        if (fromCol < 0 || fromCol > 8) return null;
+        let candidates = [];
 
-        // 找到当前方在该列的所有同名棋子（可能多个，如双车同列、叠兵）
-        const candidates = [];
-        for (let r = 0; r < 10; r++) {
-            const p = this.getPiece(r, fromCol);
-            if (p && p.color === color && this.isSamePieceName(p.name, cmd.pieceName)) {
-                candidates.push({ row: r, col: fromCol, piece: p });
+        if (cmd.fromUserCol !== null && cmd.fromUserCol !== undefined) {
+            // 带列号的着法：在该纵线上找同名棋子
+            const fromCol = this.userToInternalCol(cmd.fromUserCol, color);
+            if (fromCol < 0 || fromCol > 8) return null;
+            for (let r = 0; r < 10; r++) {
+                const p = this.getPiece(r, fromCol);
+                if (p && p.color === color && this.isSamePieceName(p.name, cmd.pieceName)) {
+                    candidates.push({ row: r, col: fromCol, piece: p });
+                }
             }
-        }
-        if (candidates.length === 0) return null;
+            if (candidates.length === 0) return null;
 
-        // 有前/中/后限定时直接锁定棋子
-        let pool = candidates;
-        if (candidates.length > 1 && cmd.qualifier) {
-            // 越靠近对方越"前"：红方行号小为前，黑方行号大为前
-            const sorted = candidates.slice().sort((a, b) => color === 'red' ? a.row - b.row : b.row - a.row);
-            if (cmd.qualifier === '前') pool = [sorted[0]];
-            else if (cmd.qualifier === '后') pool = [sorted[sorted.length - 1]];
-            else pool = sorted.length >= 3 ? [sorted[1]] : [sorted[Math.floor(sorted.length / 2)]];
+            // 有前/中/后限定时直接锁定棋子（同列多个同名棋子）
+            if (candidates.length > 1 && cmd.qualifier) {
+                // 越靠近对方越"前"：红方行号小为前，黑方行号大为前
+                const sorted = candidates.slice().sort((a, b) => color === 'red' ? a.row - b.row : b.row - a.row);
+                if (cmd.qualifier === '前') candidates = [sorted[0]];
+                else if (cmd.qualifier === '后') candidates = [sorted[sorted.length - 1]];
+                else candidates = sorted.length >= 3 ? [sorted[1]] : [sorted[Math.floor(sorted.length / 2)]];
+            }
+        } else {
+            // 不带列号的"前/中/后 + 棋子"着法（如前炮平五、后马进3）
+            // 收集该方全部同名棋子
+            for (let r = 0; r < 10; r++) {
+                for (let c = 0; c < 9; c++) {
+                    const p = this.getPiece(r, c);
+                    if (p && p.color === color && this.isSamePieceName(p.name, cmd.pieceName)) {
+                        candidates.push({ row: r, col: c, piece: p });
+                    }
+                }
+            }
+            if (candidates.length === 0) return null;
+
+            // 排序：不同纵线时列号小（己方视角靠右）为前；同纵线时靠近对方为前
+            const sorted = candidates.slice().sort((a, b) => {
+                const ua = this.internalToUserCol(a.col, color);
+                const ub = this.internalToUserCol(b.col, color);
+                if (ua !== ub) return ua - ub;
+                return color === 'red' ? a.row - b.row : b.row - a.row;
+            });
+            if (cmd.qualifier === '前') candidates = [sorted[0]];
+            else if (cmd.qualifier === '后') candidates = [sorted[sorted.length - 1]];
+            else candidates = sorted.length >= 3 ? [sorted[1]] : [sorted[Math.floor(sorted.length / 2)]];
         }
 
         const targetNum = parseInt(cmd.target, 10);
         const legalMoves = [];
-        for (const cand of pool) {
+        for (const cand of candidates) {
             const to = this.resolveTargetSquare(cand, cmd.action, targetNum, color);
             if (!to) continue;
             if (to.row < 0 || to.row >= 10 || to.col < 0 || to.col >= 9) continue;
@@ -642,7 +672,9 @@ class ChineseChess {
         }
 
         const captured = this.getPiece(toRow, toCol);
-        let message = this.describeMove(fromRow, fromCol, toRow, toCol, piece);
+        // 播报时带上"红方/黑方"前缀，盲听时能分清是哪一方走的
+        let message = (piece.color === 'red' ? '红方' : '黑方') +
+            this.describeMove(fromRow, fromCol, toRow, toCol, piece);
 
         this.board[toRow][toCol] = this.board[fromRow][fromCol];
         this.board[fromRow][fromCol] = null;

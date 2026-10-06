@@ -1,6 +1,13 @@
-// 棋谱导入与回放模块
-// 支持格式：每行一步，如 炮2平5、马8进7、炮二平五、前车2进3
-// 双方各以自己右下角为基准（列1-9右到左，行0-9下到上）
+// 棋谱导入与回放模块 v2（2026-10-06 重大修复）
+// 修复内容：
+//   1. 严格按棋谱"红先黑后"一一对应解析，不再猜测走棋方（修复串色、播报多余着法的问题）
+//   2. 解析时在棋盘上实际推演每一步，保证每步坐标与棋谱完全一致
+//   3. 自动过滤 PGN 头信息、{注释}、广告行、结果标记
+//   4. 支持"前炮平五 / 后马进3 / 前车退一"等不带列号的着法
+// 支持的棋谱格式：
+//   1. 兵七进一 炮２平３      （每行一个回合：编号 + 红着 + 黑着）
+//   兵七进一                   （每行一步）
+//   1.兵七进一 炮2平3 2.马二进三  （一行多个回合也能正确拆分）
 
 class ChessRecordPlayer {
     constructor(game, callbacks) {
@@ -13,141 +20,117 @@ class ChessRecordPlayer {
         this.timer = null;
     }
 
-    // 解析棋谱文本，返回 { total, ok, errors }
-    // 支持格式：
-    //   1. 炮二平五 马8进7    （天天象棋/书谱：每行一个回合）
-    //   炮2平5                 （每行一步）
-    //   1.炮二平五
-    //   马8进7
+    // 把棋盘恢复到初始局面
+    _resetBoard() {
+        while (this.game.moveHistory && this.game.moveHistory.length > 0) {
+            this.game.undo();
+        }
+        this.game.currentPlayer = 'red';
+        this.game.round = 1;
+        this.game.gameOver = false;
+        this.game.winner = null;
+        this.game.selectedPiece = null;
+    }
+
+    // 解析棋谱文本，返回 { total, errors }
+    // 核心原则：红方一步、黑方一步，严格与棋谱一一对应，直到棋局终了
     parse(text) {
         this.stop();
         this.moves = [];
         this.current = 0;
 
-        const errors = [];
-        let color = 'red'; // 红先
+        // 从初始局面开始推演
+        this._resetBoard();
 
-        // 第一步：把文本拆成独立的走法列表
+        const errors = [];
         const moveList = this._extractMoves(text);
 
+        let color = 'red'; // 红先
         for (let i = 0; i < moveList.length; i++) {
             const raw = moveList[i];
+            const sideName = color === 'red' ? '红方' : '黑方';
+            const stepNo = i + 1;
+
             const cmd = this.game.parseVoiceCommand(raw);
-            if (!cmd) {
-                errors.push('第' + (this.moves.length + 1) + '步：无法识别「' + raw + '」');
-                continue;
+            let move = null;
+            if (cmd) {
+                // 强制按棋谱规定的走棋方解析，绝不"猜"
+                this.game.currentPlayer = color;
+                move = this.game.resolveVoiceMove(cmd);
             }
 
-            // 尝试当前走棋方解析
-            let move = this.game.resolveVoiceMove(cmd);
-
-            // 如果当前方无合法走法，尝试另一方（兼容传统棋谱格式）
-            if (!move || move.ambiguous) {
-                const origColor = this.game.currentPlayer;
-                const otherColor = origColor === 'red' ? 'black' : 'red';
-                this.game.currentPlayer = otherColor;
-                const altMove = this.game.resolveVoiceMove(cmd);
-                this.game.currentPlayer = origColor;
-                if (altMove && !altMove.ambiguous) {
-                    move = altMove;
-                    color = otherColor;
+            if (move && !move.ambiguous) {
+                // 在棋盘上实际走出这一步，保证后续着法坐标正确
+                const res = this.game.movePieceByCoords(
+                    move.fromRow, move.fromCol, move.toRow, move.toCol);
+                if (res.success) {
+                    this.moves.push({
+                        raw: raw,
+                        fromRow: move.fromRow,
+                        fromCol: move.fromCol,
+                        toRow: move.toRow,
+                        toCol: move.toCol,
+                        color: color
+                    });
+                    color = color === 'red' ? 'black' : 'red';
+                    continue;
                 }
+                errors.push('第' + stepNo + '步 ' + sideName + '「' + raw + '」无法执行（' + res.message + '）');
+            } else if (cmd) {
+                errors.push('第' + stepNo + '步 ' + sideName + '「' + raw + '」无法确定棋子位置');
+            } else {
+                errors.push('第' + stepNo + '步 ' + sideName + '「' + raw + '」无法识别');
             }
 
-            if (!move || move.ambiguous) {
-                errors.push('第' + (this.moves.length + 1) + '步：无法执行「' + raw + '」');
-                continue;
-            }
-
-            this.moves.push({
-                raw: raw,
-                fromRow: move.fromRow,
-                fromCol: move.fromCol,
-                toRow: move.toRow,
-                toCol: move.toCol,
-                color: color
-            });
-
-            // 切换走棋方
+            // 这一步没有走成，但红黑顺序仍按棋谱推进（保持一一对应）
             color = color === 'red' ? 'black' : 'red';
         }
+
+        // 推演完毕，棋盘回到初始局面等待播放
+        this._resetBoard();
 
         return { total: this.moves.length, errors: errors };
     }
 
-    // 从文本中提取独立的走法列表
+    // 从文本中提取独立的走法列表（只保留真正的着法，过滤一切杂讯）
     _extractMoves(text) {
         const moves = [];
-        // 按行分割
-        const lines = text.split(/[\n\r]+/).map(s => s.trim()).filter(Boolean);
+        const lines = text.split(/[\n\r]+/);
 
-        for (const line of lines) {
-            // 跳过注释行
-            if (line.startsWith('#') || line.startsWith('//') || line.startsWith('{')) continue;
+        for (let line of lines) {
+            line = line.trim();
+            if (!line) continue;
+            if (line.charAt(0) === '[') continue;   // PGN 头信息
+            if (line.charAt(0) === '*') continue;   // PGN 结束标记
+            if (line.indexOf('官网') >= 0 || line.indexOf('助手') >= 0) continue; // 广告行
 
-            // 尝试匹配“回合编号 + 红走法 + 黑走法”格式
-            // 例如: "1. 炮二平五 马8进7" 或 "1、炮二平五 马8进7" 或 "1)炮二平五 马8进7"
-            const roundMatch = line.match(/^\d+[\.\、\)\]]?\s*(.+)$/);
-            if (roundMatch) {
-                const rest = roundMatch[1].trim();
-                // 把剩余部分拆成两个走法（红方 + 黑方）
-                const pair = this._splitMovePair(rest);
-                if (pair) {
-                    if (pair[0]) moves.push(pair[0]);
-                    if (pair[1]) moves.push(pair[1]);
-                    continue;
-                }
-            }
+            line = line.replace(/\{[^}]*\}/g, ' '); // 去掉 {注释}
 
-            // 没有回合编号，尝试按空格/分号拆成多个走法
-            const parts = line.split(/[\s;；]+/).map(s => s.trim()).filter(Boolean);
-            for (const part of parts) {
-                // 跳过纯数字（孤立的回合编号）
-                if (/^\d+[\.\、\)\]]?$/.test(part)) continue;
-                moves.push(part);
+            // 去掉行首回合编号（1. / 1、 / 1) 等）
+            line = line.replace(/^[0-9０-９]+\s*[\.．、\)\]]?\s*/, '');
+
+            // 按空白和常见分隔符拆分
+            const parts = line.split(/[\s;；,，]+/);
+            for (let part of parts) {
+                part = part.trim();
+                if (!part) continue;
+                // 去掉粘连的回合编号（如 "2.马二进三"）
+                part = part.replace(/^[0-9０-９]+[\.．、\)\]]?/, '');
+                // 去掉首尾杂符号
+                part = part.replace(/^["'“”「『（(]+/, '')
+                           .replace(/["'“”」』）)，。；、！？:\]】]+$/, '');
+                if (!part) continue;
+                if (this._looksLikeMove(part)) moves.push(part);
             }
         }
 
         return moves;
     }
 
-    // 把一行中的两个走法分开（红方走法 + 黑方走法）
-    // 例如 "炮二平五 马8进7" → ["炮二平五", "马8进7"]
-    _splitMovePair(text) {
-        // 找到第二个棋子名的位置
-        const pieceNames = ['帅', '将', '仕', '士', '相', '象', '马', '车', '炮', '兵', '卒', '前', '中', '后'];
-        // 从第一个棋子名之后开始找第二个
-        let firstEnd = -1;
-        for (let i = 0; i < text.length; i++) {
-            if (pieceNames.indexOf(text[i]) >= 0) {
-                // 找到第一个棋子名，继续找它的数字部分
-                if (i + 1 < text.length && /[0-9０-９一二两三四五六七八九]/.test(text[i + 1])) {
-                    // 继续找动作（进/退/平）
-                    let j = i + 2;
-                    while (j < text.length && /[0-9０-９一二两三四五六七八九]/.test(text[j])) j++;
-                    if (j < text.length && /[进退平]/.test(text[j])) {
-                        // 继续找目标数字
-                        j++;
-                        while (j < text.length && /[0-9０-９一二两三四五六七八九]/.test(text[j])) j++;
-                        firstEnd = j;
-                        break;
-                    }
-                }
-            }
-        }
-
-        if (firstEnd < 0) return null;
-
-        const first = text.substring(0, firstEnd).trim();
-        const rest = text.substring(firstEnd).trim();
-
-        if (!rest) return [first, null];
-
-        // 去掉分隔符（空格等）
-        const second = rest.replace(/^[\s;；]+/, '').trim();
-        if (!second) return [first, null];
-
-        return [first, second];
+    // 判断是否像一个着法：前/中/后? + 棋子名 + 列号? + 进/退/平 + 数字
+    // 例：炮二平五、马8进7、前炮平五、后马进3、前车2进3、后炮退一、仕四进五
+    _looksLikeMove(s) {
+        return /^[前后中]?[帅将士仕象相马车炮兵卒][0-9０-９一二两三四五六七八九]?[进退平][0-9０-９一二两三四五六七八九]$/.test(s);
     }
 
     // 执行第 index 步（0-based）
