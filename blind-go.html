@@ -712,7 +712,8 @@
         if (importedCount > 0) {
           const msg = `已自动导入 ${importedCount} 局棋谱到"我的棋谱"`;
           console.log(msg);
-          if (typeof speak === 'function') speak(msg);
+          // v32：这是后台数据整理，不再语音播报——以前页面一打开就会凭空念出
+          // "已自动导入144局棋谱"，正是开始界面的干扰声音来源。只保留可视气泡。
           if (typeof showSpeechBubble === 'function') showSpeechBubble(msg);
         } else {
           console.log('预置棋谱已全部存在，跳过导入');
@@ -1290,6 +1291,14 @@
     let speechReady = false;
     let speechInitialized = false; // 标记是否已首次播报（首次不 cancel）
     let speechDiag = { voices: 0, zhVoices: 0, picked: '', protocol: '', lastError: '', ua: '' };
+    // v32 同步修复：最近一次语音活动时间戳（开始播放/播完一句都算活动）。
+    // 自动播放的安全兜底定时器据此判断"播报是否还在进行"，避免语音还在播/还在加载
+    // 就被下一步抢跑，造成"棋盘走到前面、口播落后好几手"的不同步。
+    let lastSpeechActivity = 0;
+    // v32：当前正在播的这条语音是否为"低优先级"（欢迎语/触摸探索播报）。
+    // 低优先级语音在新交互到来时可被立即丢弃，棋谱播报绝不受影响。
+    let currentOnlineLow = false;
+    let currentLocalLow = false;
 
     // ====== 安卓语音诊断面板 ======
     function getSpeechDiagnostics() {
@@ -1410,6 +1419,18 @@
         showSpeechBubble('音频已解锁，可直接点测试语音');
         return;
       }
+      // v32 关键修复：在线语音正在播放或排队时，绝不能动 onlineAudio 的 src。
+      // 旧逻辑会在此刻把 src 换成静音WAV，把正在加载/即将播放的那句播报直接吞掉
+      // （表现为"进入后第一句没声""触摸棋盘没有位置播报"）。
+      try {
+        if (typeof onlinePlaying !== 'undefined' && onlinePlaying) {
+          audioUnlocked = true; // 正在播 = 已解锁
+          return;
+        }
+        if (typeof onlineQueue !== 'undefined' && onlineQueue.length > 0) {
+          return; // 有语音在排队，等它自己播（播的时候自然完成解锁）
+        }
+      } catch (e) {}
       // 1. 激活 AudioContext（用于落子音效）
       initAudio();
       if (audioCtx && audioCtx.state === 'suspended') {
@@ -1443,7 +1464,14 @@
           p.then(ok).catch((err) => {
             if (!triedReal) {
               triedReal = true;
-              // 静音文件可能无效，改用真实语音解锁
+              // v32 关键修复：静音文件无效时，只有当没有语音正在播放/排队时才用
+              // 真实语音（"开始"）重试解锁。旧逻辑无条件覆盖 onlineAudio 的 src，
+              // 会把正在加载的第一句语音（如欢迎语第一段）直接吞掉。
+              if (typeof onlinePlaying !== 'undefined' && (onlinePlaying || (typeof onlineQueue !== 'undefined' && onlineQueue.length > 0))) {
+                speechDiag.lastError = '解锁跳过（语音占用中）';
+                updateSpeechDiagnostics();
+                return;
+              }
               trySrc(buildBaiduTTSUrl('开始'));
             } else {
               showSpeechBubble('解锁失败: ' + String(err).slice(0, 40) + '。请尝试用Chrome浏览器打开');
@@ -1847,11 +1875,11 @@
       return '/tts?text=' + encoded;
     }
 
-    function speakBaidu(text, onEnd) {
+    function speakBaidu(text, onEnd, low) {
       const chunks = String(text).match(/[^。，；！？、,;!?]+[。，；！？、,;!?]?/g) || [text];
       chunks.forEach((chunk, idx) => {
         const trimmed = chunk.trim();
-        if (trimmed) onlineQueue.push({ text: trimmed, onEnd: idx === chunks.length - 1 ? onEnd : null });
+        if (trimmed) onlineQueue.push({ text: trimmed, onEnd: idx === chunks.length - 1 ? onEnd : null, low: !!low });
       });
       playOnlineQueue();
     }
@@ -1896,6 +1924,7 @@
       const item = onlineQueue.shift();
       const text = item.text;
       const onEnd = item.onEnd;
+      currentOnlineLow = !!item.low; // v32：记录当前这句是否低优先级
       const url = buildBaiduTTSUrl(text);
 
       let timeoutTimer = null;
@@ -1961,6 +1990,7 @@
       onlineAudio.pause();
       onlineAudio.onended = () => {
         clearT(); onlinePlaying = false; onlineFailCount = 0;
+        lastSpeechActivity = Date.now(); // v32：一句播完也算活动
         speechDiag.lastError = '播放完成';
         updateSpeechDiagnostics();
         if (onEnd) { try { onEnd(); } catch(e){} }
@@ -1984,10 +2014,11 @@
         }
       };
       // v31：成功恢复播放（或正常开始播放）时，停止恢复重试循环
-      onlineAudio.onplay = () => { stopInterruptResume(); };
+      onlineAudio.onplay = () => { stopInterruptResume(); lastSpeechActivity = Date.now(); };
       // canplaythrough 事件：音频加载完成可以播放
       onlineAudio.oncanplaythrough = () => {
         clearT(); onlineFailCount = 0;
+        lastSpeechActivity = Date.now(); // v32：加载成功也算活动（说明语音链路活着）
         speechDiag.lastError = '播放中';
         updateSpeechDiagnostics();
       };
@@ -2000,6 +2031,7 @@
       if (p && p.then) {
         p.then(() => {
           clearT(); onlineFailCount = 0;
+          lastSpeechActivity = Date.now();
           speechDiag.lastError = '播放中';
           updateSpeechDiagnostics();
         }).catch((err) => {
@@ -2015,6 +2047,7 @@
 
     function stopOnlineTTS() {
       onlineQueue = [];
+      currentOnlineLow = false; // v32
       // v31：这是"主动"暂停（停止语音/切换引擎/换句子），不应触发打断恢复
       if (onlineAudio && !onlineAudio.paused) { intentionalAudioPause = true; }
       if (onlineAudio) { onlineAudio.pause(); }
@@ -2068,7 +2101,7 @@
       }
     }
 
-    function speakLocal(text, onEnd) {
+    function speakLocal(text, onEnd, low) {
       if (!('speechSynthesis' in window)) return;
       speechInitialized = true;
       const chunks = String(text).match(/[^。，；！？、,;!?]+[。，；！？、,;!?]?/g) || [text];
@@ -2076,7 +2109,8 @@
         const isLast = (idx === chunks.length - 1);
         localSpeakQueue.push({
           text: chunk,
-          onEnd: isLast ? onEnd : null
+          onEnd: isLast ? onEnd : null,
+          low: !!low
         });
       });
       playLocalQueue();
@@ -2093,6 +2127,7 @@
       }
       if (localSpeakQueue.length === 0) return;
       const item = localSpeakQueue.shift();
+      currentLocalLow = !!item.low; // v32：记录当前这句是否低优先级
       const u = new SpeechSynthesisUtterance(item.text);
       u.lang = 'zh-CN';
       u.rate = speechRate;
@@ -2124,6 +2159,7 @@
           return;
         }
         localFailCount = 0; // 成功播出一声即复位计数
+        lastSpeechActivity = Date.now(); // v32：一句播完也算活动
         if (item.onEnd) { try { item.onEnd(); } catch(e){} }
         // 立即处理队列中的下一条
         setTimeout(playLocalQueue, 50);
@@ -2146,6 +2182,7 @@
       }, estMs);
       try {
         speechSynthesis.speak(u);
+        lastSpeechActivity = Date.now(); // v32：开始朗读即视为活动
       } catch(e) {
         clearLocalWatchdog();
         localSpeaking = false;
@@ -2159,9 +2196,47 @@
       localClearing = true;
       localSpeakQueue = [];
       localSpeaking = false;
+      currentLocalLow = false; // v32
       clearLocalWatchdog();
       if ('speechSynthesis' in window) speechSynthesis.cancel();
       setTimeout(() => { localClearing = false; }, 400);
+    }
+
+    // ====== v32 新增：低优先级语音管理 ======
+    // 欢迎语、触摸探索的位置播报属于"低优先级"：新交互到来时它们已经过时，
+    // 继续排队只会和正常播报混在一起（用户反馈的"开始界面有干扰播报"）。
+    // 此函数把还没播的低优先级语音从队列里丢掉；若当前正在播的恰好是低优先级、
+    // 且后面没有排队的棋谱播报，就把它一并停掉。棋谱播报绝不会被丢弃。
+    function stopLowPrioritySpeech() {
+      try {
+        const queueHasHigh = onlineQueue.some(it => !it.low);
+        if (onlinePlaying && currentOnlineLow && !queueHasHigh) {
+          // 整条链都是低优先级（典型：欢迎语/探索播报），直接全停
+          stopOnlineTTS();
+        } else {
+          onlineQueue = onlineQueue.filter(it => !it.low);
+        }
+      } catch (e) {}
+      try {
+        localSpeakQueue = localSpeakQueue.filter(it => !it.low);
+        if (localSpeaking && currentLocalLow) {
+          // 正在播的是低优先级：cancel 只会停当前这一句（队列是逐句播的），
+          // 剩下的高优先级条目 350ms 后自动接着播
+          localClearing = true;
+          localSpeaking = false;
+          currentLocalLow = false;
+          clearLocalWatchdog();
+          if ('speechSynthesis' in window) speechSynthesis.cancel();
+          setTimeout(() => { localClearing = false; playLocalQueue(); }, 350);
+        }
+      } catch (e) {}
+    }
+
+    // 立即播报：先丢弃过时的欢迎语/探索播报，再播这句（本身也是低优先级，
+    // 下一次交互同样可以打断它）。用于触摸探索、光标移动等高频反馈。
+    function speakNow(text, onEnd) {
+      stopLowPrioritySpeech();
+      speak(text, onEnd, true);
     }
 
     // 更新 UI 上语音引擎按钮的显示
@@ -2212,16 +2287,16 @@
       updateSpeechDiagnostics();
     }
 
-    function speak(text, onEnd) {
+    function speak(text, onEnd, low) {
       showSpeechBubble(text);
       // 移动网络模式下强制使用本地TTS，避免百度TTS被运营商拦截导致无声
       let engine = mobileNetworkMode ? 'local' : ttsEngine;
       // 本地TTS本会话已判死（手机端静音/卡死）时，不再选本地
       if (engine === 'local' && localTTSDead) engine = 'baidu';
       if (engine === 'baidu') {
-        speakBaidu(text, onEnd);
+        speakBaidu(text, onEnd, low);
       } else {
-        speakLocal(text, onEnd);
+        speakLocal(text, onEnd, low);
       }
       const live = document.getElementById('ariaLive');
       if (live) live.textContent = text;
@@ -2653,13 +2728,14 @@
       if (move.stone === 'black') soundBlack();
       else soundWhite();
 
-      // 语音播报
+      // 语音播报（v32：先丢弃过时的探索/欢迎语音，落子播报立即上口）
       let msg = `${stoneName}，${posStr}`;
       if (captured.length > 0) {
         const capturedName = move.stone === 'black' ? '白子' : '黑子';
         msg += `，提${capturedName}${CN_NUM[captured.length]}枚`;
         setTimeout(soundCapture, 200);
       }
+      stopLowPrioritySpeech();
       speak(msg);
 
       updateStatus();
@@ -2929,6 +3005,10 @@
 
     function replayNext(btn, onSpeechEnd) {
       unlockAudio();
+      // v32 同步修复：手动步进（按钮/键盘，无回调）时清掉还没播完的旧语音，
+      // 保证"听到的一手 = 棋盘上的一手"；自动播放路径（带回调）由 autoPlayStep 管理节奏。
+      if (!onSpeechEnd) { stopOnlineTTS(); clearLocalSpeakQueue(); }
+      stopLowPrioritySpeech();
       territoryMap = null;
       if (replayMoves.length === 0) {
         speak('尚未加载棋谱，请先粘贴SGF棋谱并点击加载', onSpeechEnd);
@@ -2970,6 +3050,9 @@
 
     function replayPrev(btn) {
       unlockAudio();
+      // v32 同步修复：回退会整盘重建，旧播报全部过时，直接清空
+      stopOnlineTTS();
+      clearLocalSpeakQueue();
       territoryMap = null;
       if (replayMoves.length === 0) {
         speak('尚未加载棋谱');
@@ -3054,6 +3137,9 @@
       autoPlaying = true;
       autoPlayGen++;
       if (autoBtn) autoBtn.textContent = '停止播放';
+      // v32 同步修复：开始自动播放时清掉残留的欢迎语/探索播报，棋谱播报从第一手干净开始
+      stopOnlineTTS();
+      clearLocalSpeakQueue();
       speak('开始自动播放');
       updateMediaSession('playing', '自动播放中', '连续听读棋谱');
       autoPlayStep();
@@ -3076,16 +3162,28 @@
       const nextStep = () => {
         if (!autoPlaying || proceeded || gen !== autoPlayGen) return;
         proceeded = true;
+        if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null; }
         // 使用用户设置的每步间隔（默认 1 分钟），同时保留最短呼吸间隔
         const breathe = Math.max(300, 1200 / speechRate);
         const waitMs = Math.max(autoPlayInterval, breathe);
         autoPlayTimer = setTimeout(() => autoPlayStep(), waitMs);
       };
-      // 12秒安全兜底：即使语音回调未触发也继续播放（本地TTS较慢时也能兜底）
-      const safetyTimer = setTimeout(nextStep, 12000);
+      // v32 安全兜底（活动感知版）：只有语音链路真正长时间没动静才放行。
+      // 旧版固定 12 秒，网络语音加载慢/句子较长时会在播报中途抢跑下一步，
+      // 造成"棋盘在前面走、口播落后好几手"的不同步。
+      lastSpeechActivity = Date.now(); // 本步开始计
+      let safetyTimer = setTimeout(function checkStall() {
+        safetyTimer = null;
+        if (proceeded || !autoPlaying || gen !== autoPlayGen) return;
+        if (Date.now() - lastSpeechActivity < 6000) {
+          // 最近仍有语音活动（正在播或刚播完一句），再等它一会儿
+          safetyTimer = setTimeout(checkStall, 3000);
+          return;
+        }
+        nextStep(); // 真没动静了才兜底放行
+      }, 15000);
       replayNext(null, () => {
-        if (gen !== autoPlayGen) { clearTimeout(safetyTimer); return; } // v31：已被中断作废
-        clearTimeout(safetyTimer);
+        if (gen !== autoPlayGen) { if (safetyTimer) clearTimeout(safetyTimer); return; } // v31：已被中断作废
         nextStep();
       });
     }
@@ -3117,6 +3215,9 @@
     // 跳转到指定手数（n 为 1-based 手数）。autoStart=true 时自动连续播放
     function jumpToMove(n, autoStart) {
       unlockAudio();
+      // v32 同步修复：跳转会整盘重建，旧播报全部过时，先清空再播新位置
+      stopOnlineTTS();
+      clearLocalSpeakQueue();
       if (replayMoves.length === 0) {
         speak('请先加载棋谱');
         return;
@@ -6807,7 +6908,7 @@
 
     // ============ 按钮操作函数 ============
     function playCurrentPos(btn) {
-      speak(describePosition(cursorRow, cursorCol));
+      speakNow(describePosition(cursorRow, cursorCol));
       soundMove();
     }
 
@@ -6959,8 +7060,8 @@
       cursorRow = newRow;
       cursorCol = newCol;
       soundMove();
-      // 播报新位置
-      speak(describePosition(cursorRow, cursorCol));
+      // 播报新位置（v32：speakNow 会立即打断上一条过时的位置播报）
+      speakNow(describePosition(cursorRow, cursorCol));
       updateStatus();
       drawBoard();
     }
@@ -6982,6 +7083,7 @@
       // 若应用尚未启动（如页面刷新后），自动初始化以支持直接点击操作
       if (!appStarted) {
         autoInitApp();
+        return; // v32：启动用的这次点击只用于启动，不再当作落子/探索处理
       }
       // 截图识谱模式下，使用专门的处理函数
       if (photoSGFMode) {
@@ -7036,6 +7138,7 @@
     function handleTouchStart(e) {
       if (!appStarted) {
         autoInitApp();
+        return; // v32：启动用的这次触摸只用于启动，不触发位置播报
       }
       // 在 canvas 上注册，不需要 isInteractiveTarget 检查
       // preventDefault 必须在 touchstart 同步调用，彻底阻止浏览器抢占手势（滚动/缩放/长按菜单）
@@ -7053,7 +7156,7 @@
         cursorCol = pos.col;
         drawBoard();
         soundMove();
-        speak(describePosition(pos.row, pos.col));
+        speakNow(describePosition(pos.row, pos.col)); // v32：打断式播报，避免和欢迎语/旧播报叠音
         lastTouchPos = pos;
       }
     }
@@ -7061,6 +7164,7 @@
     function handleTouchMove(e) {
       if (!appStarted) {
         autoInitApp();
+        return; // v32
       }
       e.preventDefault(); // 阻止页面滚动
       const touch = e.touches[0];
@@ -7076,7 +7180,7 @@
         cursorCol = pos.col;
         lastTouchPos = pos;
         soundMove();
-        speak(describePosition(pos.row, pos.col));
+        speakNow(describePosition(pos.row, pos.col)); // v32：打断式播报，拖动时只念最新位置
         drawBoard();
       }
     }
@@ -7110,6 +7214,7 @@
     function handleTouchEnd(e) {
       if (!appStarted) {
         autoInitApp();
+        return; // v32：启动用的这次点按不再当作落子
       }
       lastTouchTime = Date.now();
       const touch = e.changedTouches[0];
@@ -7270,12 +7375,12 @@
       setTimeout(() => updateSpeechDiagnostics(), 100);
       document.getElementById('startOverlay').style.display = 'none';
       canvas.focus();
-      // 播放欢迎语音
+      // 播放欢迎语音（v32：低优先级——用户一触摸棋盘探索/落子就自动让位，不再叠音干扰）
       const touch = isTouchDevice();
       if (touch) {
-        speak('欢迎使用围棋听棋软件。请把手机音量调大。黑方先行。');
+        speak('欢迎使用围棋听棋软件。请把手机音量调大。黑方先行。', null, true);
       } else {
-        speak('欢迎使用围棋听棋软件。黑方先行。');
+        speak('欢迎使用围棋听棋软件。黑方先行。', null, true);
       }
       console.log('autoInitApp completed - app initialized');
     }
@@ -7294,9 +7399,9 @@
       canvas.focus();
       const touch = isTouchDevice();
       if (touch) {
-        speak('欢迎使用围棋听棋软件。请把手机音量调大。黑方先行。拖动手指探索位置，快速点一下落子。');
+        speak('欢迎使用围棋听棋软件。请把手机音量调大。黑方先行。拖动手指探索位置，快速点一下落子。', null, true);
       } else {
-        speak('欢迎使用围棋听棋软件。黑方先行。使用方向键移动光标，空格键落子。按H键听取帮助。');
+        speak('欢迎使用围棋听棋软件。黑方先行。使用方向键移动光标，空格键落子。按H键听取帮助。', null, true);
       }
     }
 
