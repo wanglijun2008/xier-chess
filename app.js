@@ -152,28 +152,35 @@
         }
     
         recordPlayer = new ChessRecordPlayer(game, {
-            move: function(m, result, stepNum, total, isUndo) {
+            move: function(m, result, stepNum, total, isUndo, silent) {
+                // silent：拖动进度条/快进跳转时的静默推演，不逐句播报
+                if (silent) return null;
                 playMoveSound();
-                if (result.message) {
-                    speak(result.message);
-                    lastSpokenMessage = result.message;
-                }
+                var text = result.message || '';
+                if (text) lastSpokenMessage = text;
                 updateRecordUI(stepNum, total);
                 drawBoard();
                 updateStatus();
+                if (!text) return null;
+                // 返回 Promise：自动播放会等这句播完再计时（"2秒"=播完后再停2秒）
+                return speak(text, { noBeep: true });
             },
             playState: function(isPlaying) {
-                var btn = document.getElementById('record-play');
-                if (btn) {
-                    btn.textContent = isPlaying ? '⏸暂停' : '▶播放';
-                    btn.className = isPlaying ? 'playing' : '';
-                }
+                var playBtn = document.getElementById('record-play');
+                var pauseBtn = document.getElementById('record-pause');
+                if (playBtn) playBtn.className = isPlaying ? 'rec-primary playing' : 'rec-primary';
+                if (pauseBtn) pauseBtn.className = isPlaying ? '' : 'rec-primary';
+            },
+            seeked: function(current, total) {
+                updateRecordUI(current, total);
+                drawBoard();
+                updateStatus();
             },
             finished: function() {
                 speak('棋谱回放完毕，共' + recordPlayer.moves.length + '步');
             }
         });
-    
+
         // 打开棋谱模态框
         var btnRecord = document.getElementById('btn-record');
         if (btnRecord) btnRecord.addEventListener('click', openRecordModal);
@@ -183,7 +190,7 @@
         // 解析棋谱
         var btnParse = document.getElementById('record-parse');
         if (btnParse) btnParse.addEventListener('click', handleRecordParse);
-        // 文件导入
+        // 导入棋谱文件
         var btnFile = document.getElementById('record-file');
         var fileInput = document.getElementById('record-file-input');
         if (btnFile && fileInput) {
@@ -195,38 +202,182 @@
                 reader.onload = function(ev) {
                     var text = ev.target.result;
                     document.getElementById('record-text').value = text;
-                    speak('已导入文件，共' + text.split(/[\n\r]+/).filter(function(s){return s.trim();}).length + '行');
+                    speak('已导入文件，正在解析');
+                    handleRecordParse(); // 导入后直接解析，少一步操作
                 };
                 reader.onerror = function() {
                     showMessage('文件读取失败', 2000);
+                    speak('文件读取失败');
                 };
                 reader.readAsText(file, 'UTF-8');
                 e.target.value = '';
             });
         }
+
+        function hasPlayer() {
+            if (!recordPlayer || recordPlayer.moves.length === 0) {
+                speak('请先选择或导入棋谱');
+                return false;
+            }
+            return true;
+        }
+
         // 上一步
         var btnPrev = document.getElementById('record-prev');
         if (btnPrev) btnPrev.addEventListener('click', function() {
-            if (recordPlayer) { recordPlayer.pause(); recordPlayer.prev(); }
-        });
-        // 播放/暂停
-        var btnPlay = document.getElementById('record-play');
-        if (btnPlay) btnPlay.addEventListener('click', function() {
-            if (!recordPlayer || recordPlayer.moves.length === 0) return;
-            if (recordPlayer.playing) { recordPlayer.pause(); } else { recordPlayer.play(); }
+            if (!hasPlayer()) return;
+            recordPlayer.pause();
+            if (!recordPlayer.prev()) speak('已经是第一步了');
         });
         // 下一步
         var btnNext = document.getElementById('record-next');
         if (btnNext) btnNext.addEventListener('click', function() {
-            if (recordPlayer) { recordPlayer.pause(); recordPlayer.next(); }
+            if (!hasPlayer()) return;
+            recordPlayer.pause();
+            if (!recordPlayer.next()) speak('已经是最后一步了');
         });
-        // 速度控制
-        var speedRange = document.getElementById('record-speed-range');
-        if (speedRange) speedRange.addEventListener('input', function() {
-            if (recordPlayer) {
-                var val = parseInt(this.value, 10);
-                var interval = 5500 - val;
-                recordPlayer.setSpeed(interval);
+        // ▶ 播放
+        var btnPlay = document.getElementById('record-play');
+        if (btnPlay) btnPlay.addEventListener('click', function() {
+            if (!hasPlayer()) return;
+            recordPlayer.play();
+            if (recordPlayer.playing) speak('开始播放，第' + recordPlayer.current + '步');
+        });
+        // ⏸ 暂停
+        var btnPause = document.getElementById('record-pause');
+        if (btnPause) btnPause.addEventListener('click', function() {
+            if (!hasPlayer()) return;
+            if (recordPlayer.playing) {
+                recordPlayer.pause();
+                speak('已暂停，停在第' + recordPlayer.current + '步');
+            } else {
+                speak('现在没有在播放');
+            }
+        });
+        // 快退10步 / 快进10步
+        function skipSteps(n, label) {
+            if (!hasPlayer()) return;
+            recordPlayer.pause();
+            var moved = recordPlayer.skip(n);
+            syncRecordView();
+            if (moved === 0) {
+                speak('已经到' + (n > 0 ? '末尾' : '开头') + '了');
+                return;
+            }
+            announceStep(label + Math.abs(moved) + '步');
+        }
+        var btnBack10 = document.getElementById('record-back10');
+        if (btnBack10) btnBack10.addEventListener('click', function() { skipSteps(-10, '已快退'); });
+        var btnFwd10 = document.getElementById('record-fwd10');
+        if (btnFwd10) btnFwd10.addEventListener('click', function() { skipSteps(10, '已快进'); });
+        // 回到开头
+        var btnFirst = document.getElementById('record-first');
+        if (btnFirst) btnFirst.addEventListener('click', function() {
+            if (!hasPlayer()) return;
+            recordPlayer.pause();
+            recordPlayer.jumpTo(0);
+            syncRecordView();
+            speak('已回到开头，棋盘初始局面');
+        });
+        // 跳到末尾
+        var btnLast = document.getElementById('record-last');
+        if (btnLast) btnLast.addEventListener('click', function() {
+            if (!hasPlayer()) return;
+            recordPlayer.pause();
+            recordPlayer.jumpTo(recordPlayer.moves.length);
+            syncRecordView();
+            announceStep('已跳到末尾，');
+        });
+        // 进度条：拖动跳转
+        var seek = document.getElementById('record-seek');
+        if (seek) {
+            seek.addEventListener('input', function() {
+                if (recordPlayer && recordPlayer.playing) recordPlayer.pause();
+                var total = recordPlayer ? recordPlayer.moves.length : 0;
+                document.getElementById('record-step-info').textContent =
+                    '第 ' + this.value + ' / ' + total + ' 步';
+            });
+            seek.addEventListener('change', function() {
+                if (!hasPlayer()) return;
+                recordPlayer.pause();
+                recordPlayer.jumpTo(parseInt(this.value, 10) || 0);
+                syncRecordView();
+                announceStep('已跳到第' + recordPlayer.current + '步，');
+            });
+        }
+        // 速度档位
+        buildSpeedPresets();
+        // 语音自检
+        var btnTtsTest = document.getElementById('record-tts-test');
+        if (btnTtsTest) btnTtsTest.addEventListener('click', testTts);
+        // 清空"我的棋谱"
+        var btnClearSaved = document.getElementById('saved-games-clear');
+        if (btnClearSaved) btnClearSaved.addEventListener('click', function() {
+            saveGamesList([]);
+            buildGameLists();
+            speak('已清空我的棋谱');
+        });
+    }
+
+    // 跳转后同步界面（进度条、棋盘、状态栏）
+    function syncRecordView() {
+        if (!recordPlayer) return;
+        updateRecordUI(recordPlayer.current, recordPlayer.moves.length);
+        drawBoard();
+        updateStatus();
+    }
+
+    // 播报"第N步，红方/黑方 着法"
+    function announceStep(prefix) {
+        if (!recordPlayer) return;
+        var n = recordPlayer.current;
+        if (n <= 0) { speak(prefix + '棋盘初始局面'); return; }
+        var m = recordPlayer.moves[n - 1];
+        var side = (m && m.color === 'black') ? '黑方' : '红方';
+        speak(prefix + side + ' ' + ((m && m.message) ? m.message : (m ? m.raw : '')));
+    }
+
+    // 速度档位：每步之间停多久
+    var SPEED_PRESETS = [
+        { label: '2秒', ms: 2000 },
+        { label: '10秒', ms: 10000 },
+        { label: '30秒', ms: 30000 },
+        { label: '1分钟', ms: 60000 },
+        { label: '3分钟', ms: 180000 },
+        { label: '5分钟', ms: 300000 }
+    ];
+
+    function buildSpeedPresets() {
+        var box = document.getElementById('record-speed-presets');
+        if (!box) return;
+        box.innerHTML = '';
+        var saved = 2000;
+        try { saved = parseInt(localStorage.getItem('xiangqiRecordSpeed'), 10) || 2000; } catch (e) {}
+        if (recordPlayer) recordPlayer.setSpeed(saved);
+        SPEED_PRESETS.forEach(function(p) {
+            var b = document.createElement('button');
+            b.className = 'speed-btn' + (p.ms === saved ? ' active' : '');
+            b.textContent = p.label;
+            b.setAttribute('aria-label', '每步之间停 ' + p.label);
+            b.addEventListener('click', function() {
+                if (recordPlayer) recordPlayer.setSpeed(p.ms);
+                try { localStorage.setItem('xiangqiRecordSpeed', String(p.ms)); } catch (e2) {}
+                var all = box.querySelectorAll('.speed-btn');
+                for (var i = 0; i < all.length; i++) all[i].className = 'speed-btn';
+                b.className = 'speed-btn active';
+                speak('每步之间停' + p.label);
+            });
+            box.appendChild(b);
+        });
+    }
+
+    // 语音自检
+    function testTts() {
+        forceRetestTts();
+        speak('语音测试：如果能听到这句话，说明语音播报正常').then(function () {
+            if (ttsTested && !ttsWorking) {
+                showMessage('本浏览器没有中文语音引擎，只能用提示音', 4000);
+                playNotifySound();
             }
         });
     }
@@ -242,7 +393,8 @@
         var nSaved = getSavedGames().length;
         speak('棋谱回放。内置棋谱' + nBuiltin + '盘' +
               (nSaved > 0 ? '，我的棋谱' + nSaved + '盘' : '') +
-              '。点击棋谱名称即可播放，或在下方粘贴新棋谱。');
+              '。点击棋谱名称即可播放，也可以点"导入棋谱"选择文件，或在下方粘贴棋谱。' +
+              '播放后：拖动进度条可跳到任意一步，也可以用开头、快退十步、上一步、下一步、快进十步、末尾按钮。');
     }
 
     // ========== 棋谱库（内置 + 自动保存） ==========
@@ -412,7 +564,14 @@
     }
 
     function updateRecordUI(current, total) {
-        document.getElementById('record-step-info').textContent = '第 ' + current + ' / ' + total + ' 步';
+        var info = document.getElementById('record-step-info');
+        if (info) info.textContent = '第 ' + current + ' / ' + total + ' 步';
+        var seek = document.getElementById('record-seek');
+        if (seek) {
+            if (parseInt(seek.max, 10) !== total) seek.max = String(total);
+            seek.value = String(current);
+            seek.setAttribute('aria-valuetext', '第' + current + '步，共' + total + '步');
+        }
     }
 
     // 初始化
@@ -739,51 +898,117 @@
         }, 1000);
     }
 
-    // 语音播报（同时显示可见文字）
-    // 华为浏览器不支持TTS时，用音效替代
-    function speak(text) {
-        showMessage(text);
-        // 如果已确认TTS不工作，直接播放提示音
-        if (ttsTested && !ttsWorking) {
-            playNotifySound();
-            return;
+    // ========== 语音播报 ==========
+    // 注意：有些手机浏览器（如华为自带浏览器）没有中文语音引擎，
+    // 这时会自动改用"提示音"，并在页面上显示文字。
+    var ttsWorking = false;   // 语音引擎是否真的出声了
+    var ttsTested = false;    // 是否已测出结果
+    var ttsFailCount = 0;     // 连续失败次数
+    var ttsRetested = false;  // 是否已在用户交互后重测
+
+    // 用户第一次触摸/点击后重测一次：
+    // 浏览器要求"先有交互"才允许发声，加载时的第一次播报失败不算数
+    (function () {
+        var events = ['pointerdown', 'touchstart', 'click', 'keydown'];
+        function rearm() {
+            if (ttsRetested) return;
+            ttsRetested = true;
+            ttsTested = false;
+            ttsWorking = false;
+            ttsFailCount = 0;
+            events.forEach(function (e) { window.removeEventListener(e, rearm); });
         }
-        // 尝试TTS语音合成
-        if (synth) {
-            try {
-                if (currentUtterance) {
-                    synth.cancel();
-                }
-                currentUtterance = new SpeechSynthesisUtterance(text);
-                currentUtterance.lang = 'zh-CN';
-                currentUtterance.rate = 1.0;
-                currentUtterance.pitch = 1.0;
-                currentUtterance.onend = function() {
-                    ttsWorking = true;
-                    if (ttsTimeout) { clearTimeout(ttsTimeout); ttsTimeout = null; }
-                };
-                currentUtterance.onerror = function() {
-                    ttsWorking = false;
-                    if (ttsTimeout) { clearTimeout(ttsTimeout); ttsTimeout = null; }
-                    playNotifySound();
-                };
-                synth.speak(currentUtterance);
-                // 启动超时检测（华为浏览器TTS静默失败）
-                checkTtsWorking();
-                return;
-            } catch (e) {
-                ttsWorking = false;
-                ttsTested = true;
-            }
-        }
-        // TTS不可用，播放提示音
-        playNotifySound();
+        events.forEach(function (e) { window.addEventListener(e, rearm, { once: true }); });
+    })();
+
+    // 主动重新检测（"测试语音"按钮用）
+    function forceRetestTts() {
+        ttsRetested = true;
+        ttsTested = false;
+        ttsWorking = false;
+        ttsFailCount = 0;
     }
 
-    // TTS是否正常工作（首次调用后检测）
-    var ttsWorking = false;
-    var ttsTested = false;
-    var ttsTimeout = null;
+    // 语音播报（同时显示可见文字）
+    // 返回 Promise：这一句播完（或确定播不了）时结束 —— 棋谱回放靠它"播完一句再走一步"
+    function speak(text, opts) {
+        opts = opts || {};
+        if (typeof text !== 'string' || !text) return Promise.resolve();
+        showMessage(text);
+
+        // 已确认这台手机没有语音引擎：直接提示音，不再空等
+        if (ttsTested && !ttsWorking) {
+            if (!opts.noBeep) playNotifySound();
+            return Promise.resolve();
+        }
+        if (!synth || typeof SpeechSynthesisUtterance === 'undefined') {
+            if (!opts.noBeep) playNotifySound();
+            return Promise.resolve();
+        }
+
+        return new Promise(function (resolve) {
+            var done = false;
+            var timer = null;
+            function finish() {
+                if (done) return;
+                done = true;
+                if (timer) { clearTimeout(timer); timer = null; }
+                resolve();
+            }
+
+            var utter;
+            try {
+                utter = new SpeechSynthesisUtterance(text);
+            } catch (e) {
+                ttsTested = true; ttsWorking = false;
+                if (!opts.noBeep) playNotifySound();
+                finish();
+                return;
+            }
+            utter.lang = 'zh-CN';
+            utter.rate = opts.rate || 1.0;
+            utter.pitch = 1.0;
+
+            utter.onstart = function () { ttsWorking = true; ttsTested = true; ttsFailCount = 0; };
+            utter.onend = function () {
+                if (utter._superseded) { finish(); return; }
+                ttsWorking = true; ttsTested = true; ttsFailCount = 0;
+                finish();
+            };
+            utter.onerror = function () {
+                // 被后一句主动取消的，不算"引擎坏了"
+                if (utter._superseded) { finish(); return; }
+                ttsFailCount++;
+                if (ttsFailCount >= 2) { ttsTested = true; ttsWorking = false; }
+                if (!opts.noBeep) playNotifySound();
+                finish();
+            };
+
+            if (currentUtterance) currentUtterance._superseded = true;
+            currentUtterance = utter;
+
+            // 关键修复：cancel() 之后立刻 speak()，部分安卓浏览器会静默无声，
+            // 这里留 60 毫秒再播，声音就正常了。
+            try { synth.cancel(); } catch (e2) {}
+            setTimeout(function () {
+                try {
+                    synth.speak(utter);
+                } catch (e3) {
+                    if (!opts.noBeep) playNotifySound();
+                    finish();
+                    return;
+                }
+                // 兜底：引擎完全不回调时，按字数估算时间后继续，别把回放卡死
+                var est = Math.max(1200, text.length * 250);
+                timer = setTimeout(function () {
+                    if (done) return;
+                    ttsWorking = true;
+                    ttsTested = true;
+                    finish();
+                }, est + 1500);
+            }, 60);
+        });
+    }
     
     // 通知提示音（TTS不可用时的替代）
     function playNotifySound() {
@@ -805,17 +1030,7 @@
         });
     }
     
-    // 检测TTS是否真的能发声（华为浏览器会静默失败）
-    function checkTtsWorking() {
-        if (ttsTested) return;
-        ttsTested = true;
-        ttsTimeout = setTimeout(function() {
-            if (!ttsWorking) {
-                // 500ms后TTS还没完成，说明不支持，以后用提示音
-                ttsWorking = false;
-            }
-        }, 500);
-    }
+    // （TTS 检测逻辑已在 speak() 内实现：见 ttsWorking / ttsFailCount）
 
     // 更新状态栏
     function updateStatus() {
