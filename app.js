@@ -304,6 +304,39 @@
                 syncRecordView();
                 announceStep('已跳到第' + recordPlayer.current + '步，');
             });
+            // 手机兼容修复：部分手机浏览器（微信/华为浏览器等）里原生 range 控件
+            // 拖不动，这里直接按手指的 X 坐标计算进度，保证任何手机都能拖。
+            var seekTouching = false;
+            function seekValueFromX(x) {
+                var rect = seek.getBoundingClientRect();
+                var ratio = (x - rect.left) / Math.max(1, rect.width);
+                ratio = Math.max(0, Math.min(1, ratio));
+                var total = recordPlayer ? recordPlayer.moves.length : (parseInt(seek.max, 10) || 0);
+                var v = Math.round(ratio * total);
+                seek.value = String(v);
+                document.getElementById('record-step-info').textContent =
+                    '第 ' + v + ' / ' + total + ' 步';
+            }
+            seek.addEventListener('touchstart', function(e) {
+                seekTouching = true;
+                if (recordPlayer && recordPlayer.playing) recordPlayer.pause();
+                seekValueFromX(e.touches[0].clientX);
+                e.preventDefault();
+            }, { passive: false });
+            seek.addEventListener('touchmove', function(e) {
+                if (!seekTouching) return;
+                seekValueFromX(e.touches[0].clientX);
+                e.preventDefault();
+            }, { passive: false });
+            seek.addEventListener('touchend', function() {
+                if (!seekTouching) return;
+                seekTouching = false;
+                if (!hasPlayer()) return;
+                recordPlayer.pause();
+                recordPlayer.jumpTo(parseInt(seek.value, 10) || 0);
+                syncRecordView();
+                announceStep('已跳到第' + recordPlayer.current + '步，');
+            }, { passive: false });
         }
         // 速度档位
         buildSpeedPresets();
@@ -374,10 +407,16 @@
     // 语音自检
     function testTts() {
         forceRetestTts();
-        speak('语音测试：如果能听到这句话，说明语音播报正常').then(function () {
-            if (ttsTested && !ttsWorking) {
-                showMessage('本浏览器没有中文语音引擎，只能用提示音', 4000);
+        speak('语音测试，如果能听到这句话，说明语音播报正常').then(function () {
+            if (voiceEngine === 'online' && !onlineDead) {
+                showMessage('正在使用在线语音（本机没有中文语音引擎）', 4000);
+            } else if (voiceEngine === 'local' || ttsWorking) {
+                showMessage('正在使用本机语音播报', 3000);
+            } else if (voiceEngine === 'beep' || (localDead && onlineDead)) {
+                showMessage('语音不可用：本机无中文引擎，在线语音也连不上，只能用提示音。请检查网络后再点一次测试', 5000);
                 playNotifySound();
+            } else {
+                showMessage('本浏览器没有中文语音引擎，已自动改用在线语音', 4000);
             }
         });
     }
@@ -899,12 +938,20 @@
     }
 
     // ========== 语音播报 ==========
-    // 注意：有些手机浏览器（如华为自带浏览器）没有中文语音引擎，
-    // 这时会自动改用"提示音"，并在页面上显示文字。
-    var ttsWorking = false;   // 语音引擎是否真的出声了
+    // 双引擎方案（与围棋听棋页同源）：
+    //   1) 设备自带的 speechSynthesis（离线、响应快，电脑和多数手机可用）
+    //   2) 设备没有中文语音引擎时，自动切换"百度在线语音"
+    //   3) 在线也连不上（断网）时，退回"嘀嘀"提示音 + 屏幕文字
+    // 注意：有些手机浏览器（如华为自带浏览器、微信内置浏览器）没有中文语音引擎，
+    // 这就是"手机上没声音"的原因——现在会自动改用在线语音。
+    var ttsWorking = false;   // 本地语音引擎是否真的出声了
     var ttsTested = false;    // 是否已测出结果
     var ttsFailCount = 0;     // 连续失败次数
     var ttsRetested = false;  // 是否已在用户交互后重测
+    var voiceEngine = null;   // null=未确定, 'local'=本地可用, 'online'=在线语音, 'beep'=只能提示音
+    var localDead = false;    // 本地引擎已判死（无声/无中文语音/连续报错）
+    var onlineDead = false;   // 在线语音已判死（网络不通）
+    var onlineAudio = null;   // 在线语音的 <audio> 元素
 
     // 用户第一次触摸/点击后重测一次：
     // 浏览器要求"先有交互"才允许发声，加载时的第一次播报失败不算数
@@ -927,6 +974,73 @@
         ttsTested = false;
         ttsWorking = false;
         ttsFailCount = 0;
+        voiceEngine = null;
+        localDead = false;
+        onlineDead = false;
+    }
+
+    // 这台设备有没有中文语音引擎？（null = 声音列表还没加载出来，不知道）
+    function hasChineseVoice() {
+        try {
+            if (!synth) return false;
+            var vs = synth.getVoices();
+            if (!vs || !vs.length) return null;
+            for (var i = 0; i < vs.length; i++) {
+                if (/^zh/i.test(String(vs[i].lang || ''))) return true;
+            }
+            return false;
+        } catch (e) { return false; }
+    }
+
+    // 百度在线语音接口（与围棋听棋页完全一致，手机实测可用）
+    function buildOnlineTtsUrl(text) {
+        return 'https://fanyi.baidu.com/gettts?lan=zh&text=' + encodeURIComponent(text) +
+               '&spd=5&pit=5&vol=9&per=0';
+    }
+
+    // 用在线语音播一句话，返回 Promise（播完/失败/超时后结束）
+    function speakOnline(text, opts) {
+        opts = opts || {};
+        return new Promise(function (resolve) {
+            try {
+                if (!onlineAudio) {
+                    onlineAudio = new Audio();
+                    onlineAudio.preload = 'auto';
+                    try { onlineAudio.referrerPolicy = 'no-referrer'; } catch (e) {}
+                }
+                var a = onlineAudio;
+                var done = false;
+                var timer = null;
+                function finish(ok) {
+                    if (done) return;
+                    done = true;
+                    if (timer) { clearTimeout(timer); timer = null; }
+                    if (ok) { onlineDead = false; voiceEngine = 'online'; }
+                    resolve();
+                }
+                a.onended = function () { finish(true); };
+                a.onerror = function () {
+                    onlineDead = true;
+                    if (voiceEngine === 'online') voiceEngine = 'beep';
+                    if (!opts.noBeep) playNotifySound();
+                    finish(false);
+                };
+                // 兜底：网络太慢时不能把回放卡死，最多等 15 秒
+                timer = setTimeout(function () { finish(false); }, 15000);
+                a.src = buildOnlineTtsUrl(text);
+                var p = a.play();
+                if (p && p.catch) p.catch(function () {
+                    // 被浏览器拦住（音频还没解锁）不算判死：这次先不出声
+                    finish(false);
+                });
+            } catch (e) { resolve(); }
+        });
+    }
+
+    // 只能用提示音
+    function speakBeep(opts) {
+        if (!opts || !opts.noBeep) playNotifySound();
+        return Promise.resolve();
     }
 
     // 语音播报（同时显示可见文字）
@@ -936,24 +1050,38 @@
         if (typeof text !== 'string' || !text) return Promise.resolve();
         showMessage(text);
 
-        // 已确认这台手机没有语音引擎：直接提示音，不再空等
-        if (ttsTested && !ttsWorking) {
-            if (!opts.noBeep) playNotifySound();
-            return Promise.resolve();
-        }
-        if (!synth || typeof SpeechSynthesisUtterance === 'undefined') {
-            if (!opts.noBeep) playNotifySound();
-            return Promise.resolve();
+        // 已确认在线语音可用：直接在线播
+        if (voiceEngine === 'online' && !onlineDead) return speakOnline(text, opts);
+
+        // 两个引擎都确认不可用：提示音（点"测试语音"可重新检测）
+        if (voiceEngine === 'beep') return speakBeep(opts);
+
+        // 本地引擎不可用（判死过/接口不存在/确认无中文语音）：在线，不行就提示音
+        if (localDead || !synth || typeof SpeechSynthesisUtterance === 'undefined' || hasChineseVoice() === false) {
+            localDead = true;
+            if (onlineDead) { voiceEngine = 'beep'; return speakBeep(opts); }
+            return speakOnline(text, opts).then(function () {
+                if (onlineDead) { voiceEngine = 'beep'; if (!opts.noBeep) playNotifySound(); }
+            });
         }
 
         return new Promise(function (resolve) {
             var done = false;
             var timer = null;
+            var started = false;
+            var t0 = Date.now();
             function finish() {
                 if (done) return;
                 done = true;
                 if (timer) { clearTimeout(timer); timer = null; }
                 resolve();
+            }
+            // 本地引擎不行了：这一句转在线播，回放不中断
+            function fallbackOnline() {
+                localDead = true;
+                resolve(speakOnline(text, opts).then(function () {
+                    if (onlineDead) { voiceEngine = 'beep'; if (!opts.noBeep) playNotifySound(); }
+                }));
             }
 
             var utter;
@@ -961,25 +1089,39 @@
                 utter = new SpeechSynthesisUtterance(text);
             } catch (e) {
                 ttsTested = true; ttsWorking = false;
-                if (!opts.noBeep) playNotifySound();
-                finish();
+                fallbackOnline();
                 return;
             }
             utter.lang = 'zh-CN';
             utter.rate = opts.rate || 1.0;
             utter.pitch = 1.0;
 
-            utter.onstart = function () { ttsWorking = true; ttsTested = true; ttsFailCount = 0; };
+            utter.onstart = function () {
+                started = true;
+                ttsWorking = true; ttsTested = true; ttsFailCount = 0;
+                voiceEngine = 'local';
+            };
             utter.onend = function () {
                 if (utter._superseded) { finish(); return; }
+                if (!started && !localDead && Date.now() - t0 < 500) {
+                    // 没出声就"瞬间播完"：这台设备本地语音是坏的
+                    // （常见于没装中文语音引擎的手机浏览器，表现为完全没声音）
+                    fallbackOnline();
+                    return;
+                }
                 ttsWorking = true; ttsTested = true; ttsFailCount = 0;
+                voiceEngine = 'local';
                 finish();
             };
             utter.onerror = function () {
                 // 被后一句主动取消的，不算"引擎坏了"
                 if (utter._superseded) { finish(); return; }
                 ttsFailCount++;
-                if (ttsFailCount >= 2) { ttsTested = true; ttsWorking = false; }
+                if (ttsFailCount >= 2) {
+                    ttsTested = true; ttsWorking = false;
+                    fallbackOnline();
+                    return;
+                }
                 if (!opts.noBeep) playNotifySound();
                 finish();
             };
@@ -994,8 +1136,7 @@
                 try {
                     synth.speak(utter);
                 } catch (e3) {
-                    if (!opts.noBeep) playNotifySound();
-                    finish();
+                    fallbackOnline();
                     return;
                 }
                 // 兜底：引擎完全不回调时，按字数估算时间后继续，别把回放卡死
@@ -1009,7 +1150,7 @@
             }, 60);
         });
     }
-    
+
     // 通知提示音（TTS不可用时的替代）
     function playNotifySound() {
         initAudioContext();
