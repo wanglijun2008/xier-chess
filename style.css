@@ -637,3 +637,11 @@ touch-action: none;         /* 手机修复：滑块自己接管触摸，防止�
     font-size: 13px;
     cursor: pointer;
 }
+
+#version-info {
+    color: #666;
+    font-size: 11px;
+    cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
+}
