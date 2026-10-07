@@ -323,12 +323,24 @@ body {
 #record-modal-content {
     width: 100%;
     max-width: 500px;
-    max-height: 85vh;
+    max-height: 82vh;
+    /* 手机浏览器地址栏/底栏会动态伸缩，dvh 保证底部按钮不被底栏盖住点不到 */
+    max-height: 82dvh;
     background: #2a2a2a;
     border-radius: 16px 16px 0 0;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    /* 小屏/弹出键盘时内容仍可滚动，所有按钮都点得到 */
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+/* 弹窗内所有可点元素：消除手机双击缩放延迟，点击更跟手 */
+#record-modal-content button,
+#record-modal-content .game-btn {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: rgba(255, 255, 255, 0.15);
 }
 
 #record-modal-header {
@@ -361,8 +373,10 @@ body {
 /* 棋谱库列表（内置 + 我的棋谱） */
 #record-games-area {
     padding: 4px 16px 0;
-    max-height: 32vh;
+    max-height: 30vh;
+    max-height: 28dvh;
     overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
 }
 
 .record-games-title {
@@ -416,7 +430,7 @@ body {
 
 #record-text {
     width: 100%;
-    height: 150px;
+    height: 110px;
     padding: 12px;
     background: #1a1a1a;
     border: 2px solid #555;
