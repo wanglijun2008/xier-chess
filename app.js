@@ -409,11 +409,11 @@
         forceRetestTts();
         speak('语音测试，如果能听到这句话，说明语音播报正常').then(function () {
             if (voiceEngine === 'online' && !onlineDead) {
-                showMessage('正在使用在线语音（本机没有中文语音引擎）', 4000);
+                showMessage(ttsProxyAvailable ? '正在使用在线语音（服务器代理）' : '正在使用在线语音', 3000);
             } else if (voiceEngine === 'local' || ttsWorking) {
                 showMessage('正在使用本机语音播报', 3000);
             } else if (voiceEngine === 'beep' || (localDead && onlineDead)) {
-                showMessage('语音不可用：本机无中文引擎，在线语音也连不上，只能用提示音。请检查网络后再点一次测试', 5000);
+                showMessage('此浏览器语音不可用：本机无中文引擎，直连在线语音被拦截。请在电脑上双击"启动服务器.bat"，手机连同一WiFi访问弹出的地址，即有语音', 8000);
                 playNotifySound();
             } else {
                 showMessage('本浏览器没有中文语音引擎，已自动改用在线语音', 4000);
@@ -953,6 +953,34 @@
     var onlineDead = false;   // 在线语音已判死（网络不通）
     var onlineAudio = null;   // 在线语音的 <audio> 元素
 
+    // 在线语音来源自动检测（与围棋听棋页同一方案）：
+    //   - 通过电脑上的"启动服务器.bat"访问时，服务器带 /tts 代理（手机实测可靠）
+    //   - GitHub Pages 等静态托管没有代理 → 直连百度
+    //     （手机浏览器直连会被百度反爬拦截，此时退回提示音——这是站点无法服务端转发的限制）
+    var ttsProxyAvailable = null; // null=检测中, true=代理可用, false=无代理
+    var localNoCallbackStrikes = 0; // 本地引擎"完全不回调"的次数
+    (function detectTtsProxy() {
+        if (location.protocol === 'file:') { ttsProxyAvailable = false; return; }
+        fetch('/tts?text=' + encodeURIComponent('测'), { method: 'GET' })
+            .then(function (r) {
+                ttsProxyAvailable = r.ok &&
+                    String(r.headers.get('Content-Type') || '').indexOf('audio') === 0;
+            })
+            .catch(function () { ttsProxyAvailable = false; });
+    })();
+    // 等代理检测结果出来（最多3秒）：第一条播报时通常已经测好
+    function whenProxyKnown() {
+        if (ttsProxyAvailable !== null) return Promise.resolve(ttsProxyAvailable);
+        return new Promise(function (resolve) {
+            var t0 = Date.now();
+            (function check() {
+                if (ttsProxyAvailable !== null) return resolve(ttsProxyAvailable);
+                if (Date.now() - t0 > 3000) return resolve(false);
+                setTimeout(check, 120);
+            })();
+        });
+    }
+
     // 用户第一次触摸/点击后重测一次：
     // 浏览器要求"先有交互"才允许发声，加载时的第一次播报失败不算数
     (function () {
@@ -992,9 +1020,12 @@
         } catch (e) { return false; }
     }
 
-    // 百度在线语音接口（与围棋听棋页完全一致，手机实测可用）
-    function buildOnlineTtsUrl(text) {
-        return 'https://fanyi.baidu.com/gettts?lan=zh&text=' + encodeURIComponent(text) +
+    // 百度在线语音接口（与围棋听棋页完全一致）
+    // useProxy=true 时走本站 /tts 代理（电脑服务器转发，手机可靠）；否则直连百度
+    function buildOnlineTtsUrl(text, useProxy) {
+        var enc = encodeURIComponent(text);
+        if (useProxy) return '/tts?text=' + enc;
+        return 'https://fanyi.baidu.com/gettts?lan=zh&text=' + enc +
                '&spd=5&pit=5&vol=9&per=0';
     }
 
@@ -1002,38 +1033,40 @@
     function speakOnline(text, opts) {
         opts = opts || {};
         return new Promise(function (resolve) {
-            try {
-                if (!onlineAudio) {
-                    onlineAudio = new Audio();
-                    onlineAudio.preload = 'auto';
-                    try { onlineAudio.referrerPolicy = 'no-referrer'; } catch (e) {}
-                }
-                var a = onlineAudio;
-                var done = false;
-                var timer = null;
-                function finish(ok) {
-                    if (done) return;
-                    done = true;
-                    if (timer) { clearTimeout(timer); timer = null; }
-                    if (ok) { onlineDead = false; voiceEngine = 'online'; }
-                    resolve();
-                }
-                a.onended = function () { finish(true); };
-                a.onerror = function () {
-                    onlineDead = true;
-                    if (voiceEngine === 'online') voiceEngine = 'beep';
-                    if (!opts.noBeep) playNotifySound();
-                    finish(false);
-                };
-                // 兜底：网络太慢时不能把回放卡死，最多等 15 秒
-                timer = setTimeout(function () { finish(false); }, 15000);
-                a.src = buildOnlineTtsUrl(text);
-                var p = a.play();
-                if (p && p.catch) p.catch(function () {
-                    // 被浏览器拦住（音频还没解锁）不算判死：这次先不出声
-                    finish(false);
-                });
-            } catch (e) { resolve(); }
+            whenProxyKnown().then(function (useProxy) {
+                try {
+                    if (!onlineAudio) {
+                        onlineAudio = new Audio();
+                        onlineAudio.preload = 'auto';
+                        try { onlineAudio.referrerPolicy = 'no-referrer'; } catch (e) {}
+                    }
+                    var a = onlineAudio;
+                    var done = false;
+                    var timer = null;
+                    function finish(ok) {
+                        if (done) return;
+                        done = true;
+                        if (timer) { clearTimeout(timer); timer = null; }
+                        if (ok) { onlineDead = false; voiceEngine = 'online'; }
+                        resolve();
+                    }
+                    a.onended = function () { finish(true); };
+                    a.onerror = function () {
+                        onlineDead = true;
+                        if (voiceEngine === 'online') voiceEngine = 'beep';
+                        if (!opts.noBeep) playNotifySound();
+                        finish(false);
+                    };
+                    // 兜底：网络太慢时不能把回放卡死，最多等 15 秒
+                    timer = setTimeout(function () { finish(false); }, 15000);
+                    a.src = buildOnlineTtsUrl(text, useProxy);
+                    var p = a.play();
+                    if (p && p.catch) p.catch(function () {
+                        // 被浏览器拦住（音频还没解锁）不算判死：这次先不出声
+                        finish(false);
+                    });
+                } catch (e) { resolve(); }
+            });
         });
     }
 
@@ -1099,6 +1132,7 @@
             utter.onstart = function () {
                 started = true;
                 ttsWorking = true; ttsTested = true; ttsFailCount = 0;
+                localNoCallbackStrikes = 0;
                 voiceEngine = 'local';
             };
             utter.onend = function () {
@@ -1110,6 +1144,7 @@
                     return;
                 }
                 ttsWorking = true; ttsTested = true; ttsFailCount = 0;
+                localNoCallbackStrikes = 0;
                 voiceEngine = 'local';
                 finish();
             };
@@ -1139,12 +1174,14 @@
                     fallbackOnline();
                     return;
                 }
-                // 兜底：引擎完全不回调时，按字数估算时间后继续，别把回放卡死
+                // 兜底：引擎完全不回调时，按字数估算时间后继续，别把回放卡死。
+                // 连续两次完全不回调 → 判定本地引擎不可靠，之后改用在线语音
                 var est = Math.max(1200, text.length * 250);
                 timer = setTimeout(function () {
                     if (done) return;
-                    ttsWorking = true;
+                    localNoCallbackStrikes++;
                     ttsTested = true;
+                    if (localNoCallbackStrikes >= 2) localDead = true;
                     finish();
                 }, est + 1500);
             }, 60);
