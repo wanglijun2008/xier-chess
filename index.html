@@ -7,7 +7,7 @@
     <meta name="mobile-web-app-capable" content="yes">
     <title>西尔象棋盲棋</title>
     <link rel="manifest" href="manifest.json">
-    <link rel="stylesheet" href="style.css?v=20261007c">
+    <link rel="stylesheet" href="style.css?v=20261007d">
 </head>
 <body>
     <div id="app">
@@ -127,13 +127,14 @@
         </div>
     </div>
 
-    <script src="chess.js?v=20261007c"></script>
-    <script src="record-player.js?v=20261007c"></script>
-    <script src="games-builtin.js?v=20261007c"></script>
-    <script src="app.js?v=20261007c"></script>
+    <script src="chess.js?v=20261007d"></script>
+    <script src="record-player.js?v=20261007d"></script>
+    <script src="games-builtin.js?v=20261007d"></script>
+    <script src="audio-pack.js?v=20261007d"></script>
+    <script src="app.js?v=20261007d"></script>
     <script>
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('service-worker.js?v=20261007c').then(function(reg) {
+            navigator.serviceWorker.register('service-worker.js?v=20261007d').then(function(reg) {
                 // 检测到新版本时立即刷新
                 if (reg && reg.waiting) reg.waiting.postMessage({type: 'SKIP_WAITING'});
             });

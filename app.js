@@ -408,7 +408,9 @@
     function testTts() {
         forceRetestTts();
         speak('语音测试，如果能听到这句话，说明语音播报正常').then(function () {
-            if (voiceEngine === 'online' && !onlineDead) {
+            if (voiceEngine === 'pack') {
+                showMessage('正在使用离线语音包（断网也能播报）', 3000);
+            } else if (voiceEngine === 'online' && !onlineDead) {
                 showMessage(ttsProxyAvailable ? '正在使用在线语音（服务器代理）' : '正在使用在线语音', 3000);
             } else if (voiceEngine === 'local' || ttsWorking) {
                 showMessage('正在使用本机语音播报', 3000);
@@ -1076,12 +1078,131 @@
         return Promise.resolve();
     }
 
+    // ========== 离线语音包（audio/ 目录预生成的 MP3，断网也能播报） ==========
+    // 手机浏览器普遍没有中文语音引擎、直连在线语音又会被拦截，
+    // 语音包把常用播报句和单字提前生成好，本地拼接播放 —— 完全不依赖网络。
+    var packDead = false;   // 包不可用（缺文件等）时置 true，走旧引擎链
+    var packAudio = null;   // 顺序播放用的 Audio 元素
+    var packSeq = 0;        // 序号：新播报开始后，旧序列立即作废
+
+    // 阿拉伯数字转中文（0-999，用于拼"第10步""第3回合"等）
+    function numToCn(n) {
+        if (!isFinite(n) || n < 0 || n > 999) return null;
+        n = Math.round(n);
+        if (n === 0) return '零';
+        var D = '零一二三四五六七八九';
+        var out = '';
+        if (n >= 100) { out += D[Math.floor(n / 100)] + '百'; n %= 100; if (n > 0 && n < 10) out += '零'; }
+        if (n >= 10) { var t = Math.floor(n / 10); if (t > 1) out += D[t]; out += '十'; n %= 10; }
+        if (n > 0) out += D[n];
+        return out || null;
+    }
+
+    // 把一句话解析成语音包文件序列：['audio/xxx.mp3', 260(停顿ms), ...]
+    // 拼不出来（含包外文字）返回 null，交给本地/在线引擎
+    function packResolve(text) {
+        var pack = window.XIER_AUDIO_PACK;
+        if (!pack) return null;
+        var base = pack.base || 'audio/';
+        // 1) 整句完全匹配（提示语等，语气最自然）
+        if (pack.phrases && pack.phrases[text]) return [base + pack.phrases[text]];
+        // 2) 最长词优先分词 + 单字拼接（棋步播报，如 红方|炮|二|平|五）
+        var words = pack.words ? Object.keys(pack.words).sort(function (a, b) { return b.length - a.length; }) : [];
+        var seq = [];
+        var i = 0;
+        while (i < text.length) {
+            var ch = text.charAt(i);
+            // 数字串（含全角）→ 中文数字
+            if ((ch >= '0' && ch <= '9') || (ch >= '０' && ch <= '９')) {
+                var num = 0;
+                while (i < text.length) {
+                    var d = text.charAt(i);
+                    if (d >= '０' && d <= '９') d = String.fromCharCode(d.charCodeAt(0) - 0xFEE0);
+                    if (d < '0' || d > '9') break;
+                    num = num * 10 + (d.charCodeAt(0) - 48);
+                    i++;
+                }
+                var cn = numToCn(num);
+                if (!cn) return null;
+                for (var k = 0; k < cn.length; k++) {
+                    if (!pack.chars || !pack.chars[cn.charAt(k)]) return null;
+                    seq.push(base + pack.chars[cn.charAt(k)]);
+                }
+                continue;
+            }
+            // 标点/空格 → 停顿
+            if ('，。！？：、；·（）() '.indexOf(ch) >= 0) { seq.push(ch === ' ' ? 140 : 260); i++; continue; }
+            // 常用词（红方/黑方/吃掉/将军！...）
+            var matched = false;
+            for (var w = 0; w < words.length; w++) {
+                if (text.startsWith(words[w], i)) {
+                    seq.push(base + pack.words[words[w]]);
+                    i += words[w].length;
+                    matched = true;
+                    break;
+                }
+            }
+            if (matched) continue;
+            // 单字
+            if (pack.chars && pack.chars[ch]) { seq.push(base + pack.chars[ch]); i++; continue; }
+            // 包外文字（英文/生僻字等）→ 交给本地/在线引擎
+            return null;
+        }
+        return seq.length ? seq : null;
+    }
+
+    // 顺序播放文件序列，返回 Promise（播完/被打断/出错时结束）
+    function speakPackSeq(seq) {
+        return new Promise(function (resolve) {
+            if (!packAudio) {
+                packAudio = new Audio();
+                packAudio.preload = 'auto';
+            }
+            var a = packAudio;
+            var mySeq = ++packSeq;
+            var idx = 0;
+            function step() {
+                if (mySeq !== packSeq) return resolve(); // 被新播报取代
+                if (idx >= seq.length) { voiceEngine = 'pack'; return resolve(); }
+                var item = seq[idx++];
+                if (typeof item === 'number') return setTimeout(step, item); // 停顿
+                a.onended = function () { a.onended = null; setTimeout(step, 70); };
+                a.onerror = function () {
+                    // 包里缺文件：标记后整体降级（之后走本地/在线/提示音）
+                    packDead = true;
+                    resolve();
+                };
+                a.src = item;
+                var p = a.play();
+                if (p && p.catch) p.catch(function () {
+                    // 自动播放被浏览器拦（还没解锁）：本次不出声，不算包坏了
+                    packSeq++;
+                    resolve();
+                });
+            }
+            step();
+        });
+    }
+
     // 语音播报（同时显示可见文字）
     // 返回 Promise：这一句播完（或确定播不了）时结束 —— 棋谱回放靠它"播完一句再走一步"
     function speak(text, opts) {
         opts = opts || {};
         if (typeof text !== 'string' || !text) return Promise.resolve();
         showMessage(text);
+
+        // 已确认在用离线语音包：继续用包（稳定、断网可用）
+        if (voiceEngine === 'pack' && !packDead) {
+            var keepFiles = packResolve(text);
+            if (keepFiles) return speakPackSeq(keepFiles, opts);
+        }
+
+        // 本机没有可用的中文语音（大多数手机浏览器）→ 离线语音包优先于在线
+        // （包内文件由 Service Worker 预缓存，彻底断网也能正常播报）
+        if (!packDead && hasChineseVoice() !== true) {
+            var packFiles = packResolve(text);
+            if (packFiles) return speakPackSeq(packFiles, opts);
+        }
 
         // 已确认在线语音可用：直接在线播
         if (voiceEngine === 'online' && !onlineDead) return speakOnline(text, opts);
