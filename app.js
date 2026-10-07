@@ -3,9 +3,10 @@
     'use strict';
 
     // 版本号：每次更新递增，状态栏右下角可见，点击查看版本信息
-    const APP_VERSION = '20261007e';
+    const APP_VERSION = '20261007f';
     const APP_VERSION_DATE = '2026-10-07';
     const APP_UPDATE_NOTES = [
+        'f: 点选棋谱即自动听棋并收起弹窗；关闭弹窗不再打断听棋；弹窗高度适配手机（底部按钮可点）',
         'e: 状态栏显示版本号，方便确认是否为最新版',
         'd: 离线语音包（断网也能语音播报）',
         'c: 语音走服务器代理/在线自动检测',
@@ -194,12 +195,12 @@
         // 打开棋谱模态框
         var btnRecord = document.getElementById('btn-record');
         if (btnRecord) btnRecord.addEventListener('click', openRecordModal);
-        // 关闭
+        // 关闭：只收起弹窗，不打断正在播放的听棋（要停时用弹窗里的"暂停"或"新局"）
         var btnClose = document.getElementById('record-close');
-        if (btnClose) btnClose.addEventListener('click', closeRecordModal);
-        // 解析棋谱
+        if (btnClose) btnClose.addEventListener('click', function() { closeRecordModal(true); });
+        // 解析棋谱（手动粘贴/导入：只解析，不自动收起弹窗，方便再按"播放"或拖进度条）
         var btnParse = document.getElementById('record-parse');
-        if (btnParse) btnParse.addEventListener('click', handleRecordParse);
+        if (btnParse) btnParse.addEventListener('click', function() { handleRecordParse(false); });
         // 导入棋谱文件
         var btnFile = document.getElementById('record-file');
         var fileInput = document.getElementById('record-file-input');
@@ -435,17 +436,25 @@
 
     function openRecordModal() {
         document.getElementById('record-modal').style.display = 'flex';
+        buildGameLists();
+        // 已经载入棋谱（比如播放中关掉弹窗又打开）：直接显示控制按钮，不重置
+        if (recordPlayer && recordPlayer.moves.length > 0) {
+            document.getElementById('record-info').style.display = 'block';
+            document.getElementById('record-input-area').style.display = 'none';
+            document.getElementById('record-controls').style.display = 'flex';
+            syncRecordView();
+            speak('棋谱回放，当前第' + recordPlayer.current + '步，共' + recordPlayer.moves.length + '步');
+            return;
+        }
         document.getElementById('record-info').style.display = 'none';
         document.getElementById('record-controls').style.display = 'none';
         document.getElementById('record-input-area').style.display = 'flex';
         document.getElementById('record-text').value = '';
-        buildGameLists();
         var nBuiltin = (typeof BUILTIN_GAMES !== 'undefined') ? BUILTIN_GAMES.length : 0;
         var nSaved = getSavedGames().length;
         speak('棋谱回放。内置棋谱' + nBuiltin + '盘' +
               (nSaved > 0 ? '，我的棋谱' + nSaved + '盘' : '') +
-              '。点击棋谱名称即可播放，也可以点"导入棋谱"选择文件，或在下方粘贴棋谱。' +
-              '播放后：拖动进度条可跳到任意一步，也可以用开头、快退十步、上一步、下一步、快进十步、末尾按钮。');
+              '。点击棋谱名称即可播放。');
     }
 
     // ========== 棋谱库（内置 + 自动保存） ==========
@@ -518,12 +527,12 @@
         }
     }
 
-    // 从棋谱库点选加载
+    // 从棋谱库点选加载：解析成功后立刻开始播放并收起弹窗（盲听优先）
     var pendingGameName = null;
     function loadGameToPlay(name, text) {
         pendingGameName = name;
         document.getElementById('record-text').value = text;
-        handleRecordParse();
+        handleRecordParse(true);
     }
 
     // 从棋谱文本推断名称（优先用 PGN 的 Event 头）
@@ -558,14 +567,17 @@
         } catch (e) {}
     }
 
-    function closeRecordModal() {
-        if (recordPlayer) {
+    // keepPlaying=true 时收起弹窗但继续播放（盲听时关掉弹窗也能听、还能看棋盘）
+    function closeRecordModal(keepPlaying) {
+        if (recordPlayer && !keepPlaying) {
             recordPlayer.stop();
         }
         document.getElementById('record-modal').style.display = 'none';
+        // 弹窗遮住棋盘期间画布不刷新，收起后重画一次，保证棋盘正常显示
+        try { resizeCanvas(); drawBoard(); } catch (e) {}
     }
 
-    function handleRecordParse() {
+    function handleRecordParse(autoPlay) {
         var text = document.getElementById('record-text').value.trim();
         if (!text) {
             showMessage('请先输入棋谱内容', 2000);
@@ -612,6 +624,18 @@
         document.getElementById('record-input-area').style.display = 'none';
         document.getElementById('record-controls').style.display = 'flex';
         updateRecordUI(0, result.total);
+
+        // 点选棋谱库：立刻开始听棋，并收起弹窗露出棋盘（听完要停下时再打开弹窗按暂停）
+        if (autoPlay === true) {
+            closeRecordModal(true); // true=保留播放，不打断
+            setTimeout(function() {
+                if (recordPlayer) {
+                    recordPlayer.current = 0;
+                    recordPlayer.play();
+                    if (recordPlayer.playing) speak('开始播放，共' + result.total + '步');
+                }
+            }, 120);
+        }
     }
 
     function updateRecordUI(current, total) {
