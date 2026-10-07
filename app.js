@@ -2,6 +2,16 @@
 (function() {
     'use strict';
 
+    // 版本号：每次更新递增，状态栏右下角可见，点击查看版本信息
+    const APP_VERSION = '20261007e';
+    const APP_VERSION_DATE = '2026-10-07';
+    const APP_UPDATE_NOTES = [
+        'e: 状态栏显示版本号，方便确认是否为最新版',
+        'd: 离线语音包（断网也能语音播报）',
+        'c: 语音走服务器代理/在线自动检测',
+        'b: 在线语音兜底、进度条触摸拖动修复'
+    ];
+
     const game = new ChineseChess();
     const canvas = document.getElementById('board');
     const ctx = canvas.getContext('2d');
@@ -622,6 +632,18 @@
         try { setupEventListeners(); } catch(e) {}
         try { setupListTouchEvents(); } catch(e) {}
         try { setupRecordPlayer(); } catch(e) {}
+        // 状态栏版本号：点击查看当前版本与更新记录（用于确认手机上跑的是不是新版）
+        try {
+            var vEl = document.getElementById('version-info');
+            if (vEl) {
+                vEl.textContent = 'v' + APP_VERSION;
+                vEl.addEventListener('click', function() {
+                    showMessage('当前版本 v' + APP_VERSION + '（' + APP_VERSION_DATE + '）\n' +
+                                APP_UPDATE_NOTES.join('；'), 6000);
+                });
+            }
+            console.log('西尔象棋盲棋 v' + APP_VERSION);
+        } catch(e) {}
         speak('西尔象棋盲棋已启动，红方先行');
     }
 
