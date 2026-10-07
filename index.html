@@ -7,7 +7,7 @@
     <meta name="mobile-web-app-capable" content="yes">
     <title>西尔象棋盲棋</title>
     <link rel="manifest" href="manifest.json">
-    <link rel="stylesheet" href="style.css?v=20261007d">
+    <link rel="stylesheet" href="style.css?v=20261007e">
 </head>
 <body>
     <div id="app">
@@ -15,6 +15,7 @@
         <div id="status-bar" aria-live="polite">
             <span id="turn-info">红方走棋</span>
             <span id="round-info">第 1 回合</span>
+            <span id="version-info" title="点击查看版本信息">v20261007e</span>
         </div>
 
         <!-- 可见消息区域（语音失效时也能看到提示） -->
@@ -127,14 +128,14 @@
         </div>
     </div>
 
-    <script src="chess.js?v=20261007d"></script>
-    <script src="record-player.js?v=20261007d"></script>
-    <script src="games-builtin.js?v=20261007d"></script>
-    <script src="audio-pack.js?v=20261007d"></script>
-    <script src="app.js?v=20261007d"></script>
+    <script src="chess.js?v=20261007e"></script>
+    <script src="record-player.js?v=20261007e"></script>
+    <script src="games-builtin.js?v=20261007e"></script>
+    <script src="audio-pack.js?v=20261007e"></script>
+    <script src="app.js?v=20261007e"></script>
     <script>
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('service-worker.js?v=20261007d').then(function(reg) {
+            navigator.serviceWorker.register('service-worker.js?v=20261007e').then(function(reg) {
                 // 检测到新版本时立即刷新
                 if (reg && reg.waiting) reg.waiting.postMessage({type: 'SKIP_WAITING'});
             });
