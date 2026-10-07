@@ -659,3 +659,45 @@ touch-action: none;         /* 手机修复：滑块自己接管触摸，防止�
     -webkit-user-select: none;
     user-select: none;
 }
+
+/* ===== 听棋悬浮控制条：弹窗收起后浮在棋盘底部，随时可调 ===== */
+#listen-bar {
+    position: fixed;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: 80px; /* 具体值由 syncListenBar() 按工具栏实际高度动态设置，避免挡住按钮 */
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(30, 30, 30, 0.9);
+    border-radius: 28px;
+    padding: 6px 10px;
+    box-shadow: 0 2px 10px rgba(0,0,0,.35);
+    max-width: 96vw;
+}
+#listen-bar button {
+    flex: 0 0 auto;
+    min-width: 46px;
+    height: 46px;
+    border: none;
+    border-radius: 50%;
+    background: #4CAF50;
+    color: #fff;
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+}
+#listen-bar #lb-toggle { background: #FF9800; font-size: 22px; }
+#listen-bar #lb-info {
+    background: #1976D2;
+    border-radius: 16px;
+    padding: 0 14px;
+    height: 42px;
+    font-size: 15px;
+    white-space: nowrap;
+    max-width: 42vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 0 1 auto;
+}
