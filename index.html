@@ -7,7 +7,7 @@
     <meta name="mobile-web-app-capable" content="yes">
     <title>西尔象棋盲棋</title>
     <link rel="manifest" href="manifest.json">
-    <link rel="stylesheet" href="style.css?v=20261007g">
+    <link rel="stylesheet" href="style.css?v=20261007h">
 </head>
 <body>
     <div id="app">
@@ -15,7 +15,7 @@
         <div id="status-bar" aria-live="polite">
             <span id="turn-info">红方走棋</span>
             <span id="round-info">第 1 回合</span>
-            <span id="version-info" title="点击查看版本信息">v20261007g</span>
+            <span id="version-info" title="点击查看版本信息">v20261007h</span>
         </div>
 
         <!-- 可见消息区域（语音失效时也能看到提示） -->
@@ -128,14 +128,24 @@
         </div>
     </div>
 
-    <script src="chess.js?v=20261007g"></script>
-    <script src="record-player.js?v=20261007g"></script>
-    <script src="games-builtin.js?v=20261007g"></script>
-    <script src="audio-pack.js?v=20261007g"></script>
-    <script src="app.js?v=20261007g"></script>
+    <!-- 听棋悬浮控制条：弹窗收起后仍浮在棋盘底部，随时可暂停/跳步/打开完整控制 -->
+    <div id="listen-bar" style="display:none;" role="toolbar" aria-label="听棋控制">
+        <button id="lb-first" aria-label="回到开头">⏮</button>
+        <button id="lb-prev" aria-label="上一步">◀</button>
+        <button id="lb-toggle" aria-label="播放或暂停">⏸</button>
+        <button id="lb-next" aria-label="下一步">▶</button>
+        <button id="lb-last" aria-label="跳到末尾">⏭</button>
+        <button id="lb-info" aria-label="打开播放控制">第 0 / 0 步</button>
+    </div>
+
+    <script src="chess.js?v=20261007h"></script>
+    <script src="record-player.js?v=20261007h"></script>
+    <script src="games-builtin.js?v=20261007h"></script>
+    <script src="audio-pack.js?v=20261007h"></script>
+    <script src="app.js?v=20261007h"></script>
     <script>
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('service-worker.js?v=20261007g').then(function(reg) {
+            navigator.serviceWorker.register('service-worker.js?v=20261007h').then(function(reg) {
                 // 检测到新版本时立即刷新
                 if (reg && reg.waiting) reg.waiting.postMessage({type: 'SKIP_WAITING'});
             });
