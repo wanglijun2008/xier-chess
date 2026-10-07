@@ -3,9 +3,10 @@
     'use strict';
 
     // 版本号：每次更新递增，状态栏右下角可见，点击查看版本信息
-    const APP_VERSION = '20261007g';
+    const APP_VERSION = '20261007h';
     const APP_VERSION_DATE = '2026-10-07';
     const APP_UPDATE_NOTES = [
+        'h: 修复语音不清（两句话重叠播放的bug）；轻声母字（七/车/一/九/兵/卒）不再被裁掉字头；新增听棋悬浮控制条，弹窗收起后也能随时暂停/跳步',
         'g: 语音包改用Web Audio拼接播放：裁掉每段录音首尾静音、整句一次播出，字与字之间不再拖长（与每步间隔设置无关）',
         'f: 点选棋谱即自动听棋并收起弹窗；关闭弹窗不再打断听棋；弹窗高度适配手机（底部按钮可点）',
         'e: 状态栏显示版本号，方便确认是否为最新版',
@@ -182,6 +183,7 @@
                 var pauseBtn = document.getElementById('record-pause');
                 if (playBtn) playBtn.className = isPlaying ? 'rec-primary playing' : 'rec-primary';
                 if (pauseBtn) pauseBtn.className = isPlaying ? '' : 'rec-primary';
+                syncListenBar();
             },
             seeked: function(current, total) {
                 updateRecordUI(current, total);
@@ -299,6 +301,51 @@
             recordPlayer.jumpTo(recordPlayer.moves.length);
             syncRecordView();
             announceStep('已跳到末尾，');
+        });
+
+        // ===== 听棋悬浮控制条（弹窗收起后仍可操作，逻辑与弹窗按钮一致）=====
+        var lbFirst = document.getElementById('lb-first');
+        if (lbFirst) lbFirst.addEventListener('click', function() {
+            if (!hasPlayer()) return;
+            recordPlayer.pause();
+            recordPlayer.jumpTo(0);
+            syncRecordView();
+            speak('已回到开头，棋盘初始局面');
+        });
+        var lbPrev = document.getElementById('lb-prev');
+        if (lbPrev) lbPrev.addEventListener('click', function() {
+            if (!hasPlayer()) return;
+            recordPlayer.pause();
+            if (!recordPlayer.prev()) speak('已经是第一步了');
+        });
+        var lbNext = document.getElementById('lb-next');
+        if (lbNext) lbNext.addEventListener('click', function() {
+            if (!hasPlayer()) return;
+            recordPlayer.pause();
+            if (!recordPlayer.next()) speak('已经是最后一步了');
+        });
+        var lbLast = document.getElementById('lb-last');
+        if (lbLast) lbLast.addEventListener('click', function() {
+            if (!hasPlayer()) return;
+            recordPlayer.pause();
+            recordPlayer.jumpTo(recordPlayer.moves.length);
+            syncRecordView();
+            announceStep('已跳到末尾，');
+        });
+        var lbToggle = document.getElementById('lb-toggle');
+        if (lbToggle) lbToggle.addEventListener('click', function() {
+            if (!hasPlayer()) return;
+            if (recordPlayer.playing) {
+                recordPlayer.pause();
+                speak('已暂停，停在第' + recordPlayer.current + '步');
+            } else {
+                recordPlayer.play();
+            }
+        });
+        // 点"第x/y步"打开完整播放控制弹窗
+        var lbInfo = document.getElementById('lb-info');
+        if (lbInfo) lbInfo.addEventListener('click', function() {
+            openRecordModal();
         });
         // 进度条：拖动跳转
         var seek = document.getElementById('record-seek');
@@ -437,6 +484,7 @@
 
     function openRecordModal() {
         document.getElementById('record-modal').style.display = 'flex';
+        syncListenBar(); // 弹窗开着时隐藏悬浮条（控制都在弹窗里）
         buildGameLists();
         // 已经载入棋谱（比如播放中关掉弹窗又打开）：直接显示控制按钮，不重置
         if (recordPlayer && recordPlayer.moves.length > 0) {
@@ -574,6 +622,7 @@
             recordPlayer.stop();
         }
         document.getElementById('record-modal').style.display = 'none';
+        syncListenBar(); // 收起弹窗后：棋谱还在就显示悬浮控制条
         // 弹窗遮住棋盘期间画布不刷新，收起后重画一次，保证棋盘正常显示
         try { resizeCanvas(); drawBoard(); } catch (e) {}
     }
@@ -648,6 +697,26 @@
             seek.value = String(current);
             seek.setAttribute('aria-valuetext', '第' + current + '步，共' + total + '步');
         }
+        syncListenBar();
+    }
+
+    // 听棋悬浮控制条：弹窗收起后仍浮在屏幕底部，随时能暂停/跳步/打开完整控制
+    // （解决"选完棋谱弹窗自动收起后，找不到播放调整界面"的问题）
+    function syncListenBar() {
+        var bar = document.getElementById('listen-bar');
+        if (!bar) return;
+        // 浮在底部工具栏正上方，不挡住"新局/棋谱"等按钮
+        var tb = document.getElementById('toolbar');
+        var bottomPx = (tb && tb.offsetHeight ? tb.offsetHeight : 64) + 8;
+        bar.style.bottom = 'calc(' + bottomPx + 'px + env(safe-area-inset-bottom, 0px))';
+        var has = recordPlayer && recordPlayer.moves.length > 0;
+        var modalOpen = document.getElementById('record-modal').style.display !== 'none' &&
+                        document.getElementById('record-modal').style.display !== '';
+        bar.style.display = (has && !modalOpen) ? 'flex' : 'none';
+        var t = document.getElementById('lb-toggle');
+        if (t) t.textContent = (recordPlayer && recordPlayer.playing) ? '⏸' : '▶';
+        var li = document.getElementById('lb-info');
+        if (li && has) li.textContent = '第 ' + recordPlayer.current + ' / ' + recordPlayer.moves.length + ' 步';
     }
 
     // 初始化
@@ -1252,7 +1321,15 @@
     function trimPackBuffer(buf) {
         try {
             var ch = buf.numberOfChannels, len = buf.length, sr = buf.sampleRate;
-            var thresh = 0.006, c, i, d;
+            var c, i, d, peak = 0;
+            d = buf.getChannelData(0);
+            for (i = 0; i < len; i += 3) {
+                var v = Math.abs(d[i]);
+                if (v > peak) peak = v;
+            }
+            // 阈值=峰值的1.5%（下限0.002）：裁掉静音但绝不切掉
+            // "七/车/一/九/兵/卒"这类轻声母的字头（声母音量小，阈值高了会切掉导致不清）
+            var thresh = Math.max(0.002, peak * 0.015);
             var start = -1, end = -1;
             for (i = 0; i < len && start < 0; i++) {
                 for (c = 0; c < ch; c++) {
@@ -1267,9 +1344,9 @@
                     if (Math.abs(d[i]) > thresh) { end = i; break; }
                 }
             }
-            // 首尾留一点自然余韵
-            start = Math.max(0, start - Math.floor(sr * 0.015));
-            end = Math.min(len - 1, end + Math.floor(sr * 0.03));
+            // 字头留50ms、字尾留80ms余韵：保留声母和韵尾，听感自然
+            start = Math.max(0, start - Math.floor(sr * 0.05));
+            end = Math.min(len - 1, end + Math.floor(sr * 0.08));
             var n = end - start + 1;
             if (n >= len || n <= 0) return buf;
             var out = getPackCtx().createBuffer(1, n, sr);
@@ -1284,6 +1361,10 @@
         return new Promise(function (resolve) {
             var ctx = getPackCtx();
             if (!ctx) return resolve(false);
+            // 同步登记序号：必须在任何异步操作之前！
+            // 否则两条播报重叠时（如"成功解析48步"还没播完、下一步棋已开始），
+            // 旧播报解码完后会误认为自己最新而同时播出——两个声音叠加就是"语音不清"
+            var mySeq = ++packSeq;
             var urls = [];
             for (var i = 0; i < seq.length; i++) if (typeof seq[i] === 'string') urls.push(seq[i]);
             Promise.all(urls.map(loadPackBuffer)).then(function (bufs) {
@@ -1313,7 +1394,6 @@
                         od.set(schedule[j].buf.getChannelData(0), schedule[j].at);
                     }
                     // 播放（可能被浏览器自动播放策略拦住：此时静默结束，不算包坏了）
-                    var mySeq = ++packSeq;
                     var settled = false;
                     function done(playedOk) {
                         if (settled) return;
@@ -1325,11 +1405,13 @@
                         if (mySeq !== packSeq) return done(true); // 被新播报取代
                         if (ctx.state !== 'running') return done(false);
                         try {
-                            packSrcNode = ctx.createBufferSource();
-                            packSrcNode.buffer = outBuf;
-                            packSrcNode.connect(ctx.destination);
-                            packSrcNode.onended = function () { packSrcNode = null; done(true); };
-                            packSrcNode.start();
+                            if (packSrcNode) { try { packSrcNode.stop(); } catch (e2) {} } // 防叠音
+                            var node = ctx.createBufferSource();
+                            node.buffer = outBuf;
+                            node.connect(ctx.destination);
+                            node.onended = function () { if (packSrcNode === node) packSrcNode = null; done(true); };
+                            packSrcNode = node;
+                            node.start();
                         } catch (e) { done(false); }
                     }
                     if (ctx.state === 'suspended') {
@@ -1629,6 +1711,7 @@
             recordPlayer.moves = [];
             recordPlayer.current = 0;
         }
+        syncListenBar(); // 棋谱已清空：隐藏悬浮控制条
         game.board = game.initBoard();
         game.currentPlayer = 'red';
         game.selectedPiece = null;
