@@ -3,9 +3,10 @@
     'use strict';
 
     // 版本号：每次更新递增，状态栏右下角可见，点击查看版本信息
-    const APP_VERSION = '20261007f';
+    const APP_VERSION = '20261007g';
     const APP_VERSION_DATE = '2026-10-07';
     const APP_UPDATE_NOTES = [
+        'g: 语音包改用Web Audio拼接播放：裁掉每段录音首尾静音、整句一次播出，字与字之间不再拖长（与每步间隔设置无关）',
         'f: 点选棋谱即自动听棋并收起弹窗；关闭弹窗不再打断听棋；弹窗高度适配手机（底部按钮可点）',
         'e: 状态栏显示版本号，方便确认是否为最新版',
         'd: 离线语音包（断网也能语音播报）',
@@ -668,6 +669,15 @@
             }
             console.log('西尔象棋盲棋 v' + APP_VERSION);
         } catch(e) {}
+        // 首次触摸/点击解锁 Web Audio（语音包拼接播放用；否则第一下点击前是静音的）
+        try {
+            var unlockPackAudio = function () {
+                var c = getPackCtx();
+                if (c && c.state === 'suspended') { try { c.resume(); } catch (e2) {} }
+            };
+            document.addEventListener('touchend', unlockPackAudio, { passive: true });
+            document.addEventListener('click', unlockPackAudio);
+        } catch(e) {}
         speak('西尔象棋盲棋已启动，红方先行');
     }
 
@@ -1198,7 +1208,147 @@
     }
 
     // 顺序播放文件序列，返回 Promise（播完/被打断/出错时结束）
+    // 优先 Web Audio：把整句话裁掉每段首尾静音后拼成一个音频一次性播放，
+    // 字与字之间只有约60毫秒间隔 —— 听起来是正常说话的节奏（不会逐字拖长）
     function speakPackSeq(seq) {
+        // 新播报开始：先停掉正在播的（onended保留，让旧Promise正常结束）
+        if (packSrcNode) { try { packSrcNode.stop(); } catch (e) {} packSrcNode = null; }
+        packAudioStop();
+        return speakPackWebAudio(seq).then(function (played) {
+            if (played) return;
+            return speakPackChain(seq); // 兜底：<audio> 逐段播放
+        });
+    }
+
+    // ---- Web Audio 拼接播放 ----
+    var packCtx = null;        // AudioContext
+    var packBufCache = {};     // url -> Promise<AudioBuffer>
+    var packSrcNode = null;    // 当前播放的音源
+
+    function getPackCtx() {
+        if (packCtx) return packCtx;
+        try {
+            var AC = window.AudioContext || window.webkitAudioContext;
+            if (AC) packCtx = new AC();
+        } catch (e) { packCtx = null; }
+        return packCtx;
+    }
+
+    function loadPackBuffer(url) {
+        if (!packBufCache[url]) {
+            packBufCache[url] = fetch(url).then(function (r) {
+                if (!r.ok) throw new Error('http ' + r.status);
+                return r.arrayBuffer();
+            }).then(function (ab) {
+                return new Promise(function (res, rej) {
+                    getPackCtx().decodeAudioData(ab, res, rej);
+                });
+            });
+        }
+        return packBufCache[url];
+    }
+
+    // 裁掉录音首尾的静音（百度每段MP3首尾自带约0.2~0.3秒静音，不裁字与字之间会拖长）
+    function trimPackBuffer(buf) {
+        try {
+            var ch = buf.numberOfChannels, len = buf.length, sr = buf.sampleRate;
+            var thresh = 0.006, c, i, d;
+            var start = -1, end = -1;
+            for (i = 0; i < len && start < 0; i++) {
+                for (c = 0; c < ch; c++) {
+                    d = buf.getChannelData(c);
+                    if (Math.abs(d[i]) > thresh) { start = i; break; }
+                }
+            }
+            if (start < 0) return buf;               // 整段静音：原样返回
+            for (i = len - 1; i > start && end < 0; i--) {
+                for (c = 0; c < ch; c++) {
+                    d = buf.getChannelData(c);
+                    if (Math.abs(d[i]) > thresh) { end = i; break; }
+                }
+            }
+            // 首尾留一点自然余韵
+            start = Math.max(0, start - Math.floor(sr * 0.015));
+            end = Math.min(len - 1, end + Math.floor(sr * 0.03));
+            var n = end - start + 1;
+            if (n >= len || n <= 0) return buf;
+            var out = getPackCtx().createBuffer(1, n, sr);
+            out.getChannelData(0).set(buf.getChannelData(0).subarray(start, end + 1));
+            return out;
+        } catch (e) { return buf; }
+    }
+
+    // seq: ['audio/x.mp3', 260, 'audio/y.mp3', ...]（数字=停顿毫秒）
+    // 返回 Promise<true>=已用WebAudio播出（含被打断），<false>=不可用需走兜底
+    function speakPackWebAudio(seq) {
+        return new Promise(function (resolve) {
+            var ctx = getPackCtx();
+            if (!ctx) return resolve(false);
+            var urls = [];
+            for (var i = 0; i < seq.length; i++) if (typeof seq[i] === 'string') urls.push(seq[i]);
+            Promise.all(urls.map(loadPackBuffer)).then(function (bufs) {
+                try {
+                    var sr = ctx.sampleRate, k = 0;
+                    // 段落序列：{buf} 或 {ms}
+                    var segs = [];
+                    for (var j = 0; j < seq.length; j++) {
+                        if (typeof seq[j] === 'number') segs.push({ ms: seq[j] });
+                        else segs.push({ buf: trimPackBuffer(bufs[k++] || bufs[0]) });
+                    }
+                    // 计算总时长（两个读音段之间默认留 60ms）
+                    var pos = 0, prevBuf = false, schedule = [];
+                    for (j = 0; j < segs.length; j++) {
+                        var s = segs[j];
+                        if (s.buf) {
+                            if (prevBuf) pos += Math.floor(sr * 0.06);
+                            schedule.push({ buf: s.buf, at: pos });
+                            pos += s.buf.length;
+                            prevBuf = true;
+                        } else { pos += Math.floor(sr * s.ms / 1000); prevBuf = false; }
+                    }
+                    if (pos <= 0) return resolve(false);
+                    var outBuf = ctx.createBuffer(1, pos, sr);
+                    var od = outBuf.getChannelData(0);
+                    for (j = 0; j < schedule.length; j++) {
+                        od.set(schedule[j].buf.getChannelData(0), schedule[j].at);
+                    }
+                    // 播放（可能被浏览器自动播放策略拦住：此时静默结束，不算包坏了）
+                    var mySeq = ++packSeq;
+                    var settled = false;
+                    function done(playedOk) {
+                        if (settled) return;
+                        settled = true;
+                        if (playedOk && mySeq === packSeq) voiceEngine = 'pack';
+                        resolve(playedOk);
+                    }
+                    function tryPlay() {
+                        if (mySeq !== packSeq) return done(true); // 被新播报取代
+                        if (ctx.state !== 'running') return done(false);
+                        try {
+                            packSrcNode = ctx.createBufferSource();
+                            packSrcNode.buffer = outBuf;
+                            packSrcNode.connect(ctx.destination);
+                            packSrcNode.onended = function () { packSrcNode = null; done(true); };
+                            packSrcNode.start();
+                        } catch (e) { done(false); }
+                    }
+                    if (ctx.state === 'suspended') {
+                        var t = setTimeout(function () { done(false); }, 400); // 没解锁：不卡回放
+                        ctx.resume().then(function () { clearTimeout(t); tryPlay(); },
+                                          function () { clearTimeout(t); done(false); });
+                    } else tryPlay();
+                } catch (e) { resolve(false); }
+            }).catch(function () { resolve(false); }); // 文件取不到等：走兜底
+        });
+    }
+
+    // 停掉兜底用的 <audio>
+    function packAudioStop() {
+        if (packAudio) { try { packAudio.pause(); packAudio.onended = null; } catch (e) {} }
+    }
+
+    // 兜底：<audio> 逐段顺序播放（Web Audio 不可用时）
+    function speakPackChain(seq) {
         return new Promise(function (resolve) {
             if (!packAudio) {
                 packAudio = new Audio();
@@ -1212,7 +1362,7 @@
                 if (idx >= seq.length) { voiceEngine = 'pack'; return resolve(); }
                 var item = seq[idx++];
                 if (typeof item === 'number') return setTimeout(step, item); // 停顿
-                a.onended = function () { a.onended = null; setTimeout(step, 70); };
+                a.onended = function () { a.onended = null; setTimeout(step, 60); };
                 a.onerror = function () {
                     // 包里缺文件：标记后整体降级（之后走本地/在线/提示音）
                     packDead = true;
