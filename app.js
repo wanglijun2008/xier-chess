@@ -1473,6 +1473,12 @@
 
     // 新局
     function newGame() {
+        // 新局：结束正在进行的棋谱听棋（否则旧棋谱会继续播报，和当前对局对不上）
+        if (recordPlayer && (recordPlayer.playing || recordPlayer.moves.length > 0)) {
+            recordPlayer.stop();
+            recordPlayer.moves = [];
+            recordPlayer.current = 0;
+        }
         game.board = game.initBoard();
         game.currentPlayer = 'red';
         game.selectedPiece = null;
