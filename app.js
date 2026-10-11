@@ -3,9 +3,10 @@
     'use strict';
 
     // 版本号：每次更新递增，状态栏右下角可见，点击查看版本信息
-    const APP_VERSION = '20261011';
+    const APP_VERSION = '20261011b';
     const APP_VERSION_DATE = '2026-10-11';
     const APP_UPDATE_NOTES = [
+        '20261011b: 修复手机没声音（不再依赖手机自带TTS，离线语音包优先，首次触摸即解锁音频）；听棋面板常驻显示快退/快进5步、10步与速度档位（2秒~10分钟，含10分钟）；',
         '20261011: 网页版与单机版合并为一套代码。新增电脑操作：方向键移动光标、空格选子落子、回车报光标位置、鼠标点击走棋；新增一键打包脚本，生成内嵌语音包的单机版HTML，电脑手机双击即用、断网可用',
         'h: 修复语音不清（两句话重叠播放的bug）；轻声母字（七/车/一/九/兵/卒）不再被裁掉字头；新增听棋悬浮控制条，弹窗收起后也能随时暂停/跳步',
         'g: 语音包改用Web Audio拼接播放：裁掉每段录音首尾静音、整句一次播出，字与字之间不再拖长（与每步间隔设置无关）',
@@ -75,9 +76,15 @@
     let audioContext = null;
 
     function initAudioContext() {
-        if (!audioContext) {
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        }
+        try {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            // 手机浏览器：AudioContext 常被挂起，恢复后才出得了声（走棋音效/提示音）
+            if (audioContext && audioContext.state === 'suspended' && audioContext.resume) {
+                try { audioContext.resume(); } catch (e) {}
+            }
+        } catch (e) { audioContext = null; }
     }
 
     function playMoveSound() {
@@ -354,6 +361,18 @@
         if (lbInfo) lbInfo.addEventListener('click', function() {
             openRecordModal();
         });
+        // 常驻面板：快退/快进 5 步、10 步（与弹窗里的按钮同一套逻辑）
+        function bindLbSkip(id, n, label) {
+            var b = document.getElementById(id);
+            if (b) b.addEventListener('click', function() { skipSteps(n, label); });
+        }
+        bindLbSkip('lb-back10', -10, '已快退');
+        bindLbSkip('lb-back5', -5, '已快退');
+        bindLbSkip('lb-fwd5', 5, '已快进');
+        bindLbSkip('lb-fwd10', 10, '已快进');
+        // 常驻面板：测试语音（听不到声音时点这里，会报告当前用的是哪个引擎）
+        var lbTtsTest = document.getElementById('lb-tts-test');
+        if (lbTtsTest) lbTtsTest.addEventListener('click', testTts);
         // 进度条：拖动跳转
         var seek = document.getElementById('record-seek');
         if (seek) {
@@ -436,38 +455,67 @@
         speak(prefix + side + ' ' + ((m && m.message) ? m.message : (m ? m.raw : '')));
     }
 
-    // 速度档位：每步之间停多久
+    // 速度档位：每步之间停多久（2秒 → 10分钟）
     var SPEED_PRESETS = [
         { label: '2秒', ms: 2000 },
         { label: '10秒', ms: 10000 },
         { label: '30秒', ms: 30000 },
         { label: '1分钟', ms: 60000 },
         { label: '3分钟', ms: 180000 },
-        { label: '5分钟', ms: 300000 }
+        { label: '5分钟', ms: 300000 },
+        { label: '10分钟', ms: 600000 }
     ];
+    // 两处速度按钮的容器：弹窗里的 + 常驻听棋面板里的
+    var SPEED_BOX_IDS = ['record-speed-presets', 'listen-speed-presets'];
+
+    // 应用速度：两处按钮同步高亮
+    function applySpeed(ms, silent) {
+        if (recordPlayer) recordPlayer.setSpeed(ms);
+        try { localStorage.setItem('xiangqiRecordSpeed', String(ms)); } catch (e) {}
+        SPEED_BOX_IDS.forEach(function(id) {
+            var box = document.getElementById(id);
+            if (!box) return;
+            var all = box.querySelectorAll('.speed-btn');
+            for (var i = 0; i < all.length; i++) {
+                var on = parseInt(all[i].getAttribute('data-ms'), 10) === ms;
+                all[i].className = 'speed-btn' + (on ? ' active' : '');
+            }
+        });
+        if (silent) return;
+        var p = null;
+        for (var j = 0; j < SPEED_PRESETS.length; j++) {
+            if (SPEED_PRESETS[j].ms === ms) p = SPEED_PRESETS[j];
+        }
+        speak('每步之间停' + (p ? p.label : Math.round(ms / 1000) + '秒'));
+    }
 
     function buildSpeedPresets() {
-        var box = document.getElementById('record-speed-presets');
-        if (!box) return;
-        box.innerHTML = '';
         var saved = 2000;
         try { saved = parseInt(localStorage.getItem('xiangqiRecordSpeed'), 10) || 2000; } catch (e) {}
-        if (recordPlayer) recordPlayer.setSpeed(saved);
-        SPEED_PRESETS.forEach(function(p) {
-            var b = document.createElement('button');
-            b.className = 'speed-btn' + (p.ms === saved ? ' active' : '');
-            b.textContent = p.label;
-            b.setAttribute('aria-label', '每步之间停 ' + p.label);
-            b.addEventListener('click', function() {
-                if (recordPlayer) recordPlayer.setSpeed(p.ms);
-                try { localStorage.setItem('xiangqiRecordSpeed', String(p.ms)); } catch (e2) {}
-                var all = box.querySelectorAll('.speed-btn');
-                for (var i = 0; i < all.length; i++) all[i].className = 'speed-btn';
-                b.className = 'speed-btn active';
-                speak('每步之间停' + p.label);
+        SPEED_BOX_IDS.forEach(function(id) {
+            var box = document.getElementById(id);
+            if (!box) return;
+            box.innerHTML = '';
+            SPEED_PRESETS.forEach(function(p) {
+                var b = document.createElement('button');
+                b.className = 'speed-btn' + (p.ms === saved ? ' active' : '');
+                b.setAttribute('data-ms', String(p.ms));
+                b.textContent = p.label;
+                b.setAttribute('aria-label', '每步之间停 ' + p.label);
+                b.addEventListener('click', function() { applySpeed(p.ms); });
+                box.appendChild(b);
             });
-            box.appendChild(b);
         });
+        applySpeed(saved, true);
+    }
+
+    // 当前正在用的语音引擎名称（点版本号可查看，便于排查"没声音"）
+    function engineName() {
+        if (voiceEngine === 'pack') return '离线语音包（推荐）';
+        if (voiceEngine === 'online') return onlineDead ? '在线语音（已失效）' : '在线语音';
+        if (voiceEngine === 'local') return '本机语音';
+        if (voiceEngine === 'beep') return '提示音（语音不可用，点🔊重试）';
+        return '未确定（点🔊测试语音检测）';
     }
 
     // 语音自检
@@ -707,19 +755,21 @@
         syncListenBar();
     }
 
-    // 听棋悬浮控制条：弹窗收起后仍浮在屏幕底部，随时能暂停/跳步/打开完整控制
+    // 听棋控制面板：选完棋谱、弹窗收起后出现在棋盘下方（正常布局，不遮挡棋盘）
     // （解决"选完棋谱弹窗自动收起后，找不到播放调整界面"的问题）
     function syncListenBar() {
         var bar = document.getElementById('listen-bar');
         if (!bar) return;
-        // 浮在底部工具栏正上方，不挡住"新局/棋谱"等按钮
-        var tb = document.getElementById('toolbar');
-        var bottomPx = (tb && tb.offsetHeight ? tb.offsetHeight : 64) + 8;
-        bar.style.bottom = 'calc(' + bottomPx + 'px + env(safe-area-inset-bottom, 0px))';
         var has = recordPlayer && recordPlayer.moves.length > 0;
         var modalOpen = document.getElementById('record-modal').style.display !== 'none' &&
                         document.getElementById('record-modal').style.display !== '';
-        bar.style.display = (has && !modalOpen) ? 'flex' : 'none';
+        var show = has && !modalOpen;
+        var want = show ? 'flex' : 'none';
+        if (bar.style.display !== want) {
+            bar.style.display = want;
+            // 面板出现/消失会改变棋盘可用高度：重算棋盘尺寸，避免盖住或留大片空白
+            try { resizeCanvas(); } catch (e) {}
+        }
         var t = document.getElementById('lb-toggle');
         if (t) t.textContent = (recordPlayer && recordPlayer.playing) ? '⏸' : '▶';
         var li = document.getElementById('lb-info');
@@ -740,6 +790,7 @@
                 vEl.textContent = 'v' + APP_VERSION;
                 vEl.addEventListener('click', function() {
                     showMessage('当前版本 v' + APP_VERSION + '（' + APP_VERSION_DATE + '）\n' +
+                                '语音引擎：' + engineName() + '\n' +
                                 APP_UPDATE_NOTES.join('；'), 6000);
                 });
             }
@@ -1309,12 +1360,13 @@
     // 顺序播放文件序列，返回 Promise（播完/被打断/出错时结束）
     // 优先 Web Audio：把整句话裁掉每段首尾静音后拼成一个音频一次性播放，
     // 字与字之间只有约60毫秒间隔 —— 听起来是正常说话的节奏（不会逐字拖长）
+    // 返回值：true = 这一句已由语音包播出（或被新播报取代），false = 包没能出声（需上层兜底）
     function speakPackSeq(seq) {
         // 新播报开始：先停掉正在播的（onended保留，让旧Promise正常结束）
         if (packSrcNode) { try { packSrcNode.stop(); } catch (e) {} packSrcNode = null; }
         packAudioStop();
         return speakPackWebAudio(seq).then(function (played) {
-            if (played) return;
+            if (played) return true;
             return speakPackChain(seq); // 兜底：<audio> 逐段播放
         });
     }
@@ -1332,6 +1384,34 @@
         } catch (e) { packCtx = null; }
         return packCtx;
     }
+
+    // 手机上音频必须由"用户手势"解锁：第一次触摸/点击/按键时就把 AudioContext
+    // 建好并 resume()，以后回放时（在定时器里触发、已经没有手势了）才不会静默无声
+    (function unlockAudioOnFirstGesture() {
+        var events = ['pointerdown', 'touchstart', 'mousedown', 'keydown'];
+        var unlocked = false;
+        // 0.05 秒的静音 wav：给 <audio>/媒体通道"盖章"，微信和安卓浏览器认这一下
+        var SILENT = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+        function unlock() {
+            if (unlocked) return;
+            unlocked = true;
+            try {
+                var c = getPackCtx();
+                if (c && c.state !== 'running' && c.resume) c.resume();
+            } catch (e) {}
+            try {
+                var a = new Audio(SILENT);
+                a.volume = 0;
+                var p = a.play();
+                if (p && p.catch) p.catch(function () {});
+            } catch (e2) {}
+            events.forEach(function (ev) { document.removeEventListener(ev, unlock); });
+            try { document.removeEventListener('WeixinJSBridgeReady', unlock); } catch (e3) {}
+        }
+        events.forEach(function (ev) { document.addEventListener(ev, unlock, { once: true }); });
+        // 微信内置浏览器：桥接就绪后也解锁一次
+        try { document.addEventListener('WeixinJSBridgeReady', unlock, false); } catch (e4) {}
+    })();
 
     // 单机版：语音包 mp3 由打包脚本内嵌为 data:URI（window.XIER_AUDIO_EMBED），
     // 双击打开（file://）时 fetch 不到 audio/ 目录，改用内嵌数据
@@ -1479,22 +1559,22 @@
             var mySeq = ++packSeq;
             var idx = 0;
             function step() {
-                if (mySeq !== packSeq) return resolve(); // 被新播报取代
-                if (idx >= seq.length) { voiceEngine = 'pack'; return resolve(); }
+                if (mySeq !== packSeq) return resolve(true); // 被新播报取代
+                if (idx >= seq.length) { voiceEngine = 'pack'; return resolve(true); }
                 var item = seq[idx++];
                 if (typeof item === 'number') return setTimeout(step, item); // 停顿
                 a.onended = function () { a.onended = null; setTimeout(step, 60); };
                 a.onerror = function () {
                     // 包里缺文件：标记后整体降级（之后走本地/在线/提示音）
                     packDead = true;
-                    resolve();
+                    resolve(false);
                 };
                 a.src = packUrl(item);
                 var p = a.play();
                 if (p && p.catch) p.catch(function () {
                     // 自动播放被浏览器拦（还没解锁）：本次不出声，不算包坏了
                     packSeq++;
-                    resolve();
+                    resolve(false);
                 });
             }
             step();
@@ -1508,18 +1588,26 @@
         if (typeof text !== 'string' || !text) return Promise.resolve();
         showMessage(text);
 
-        // 已确认在用离线语音包：继续用包（稳定、断网可用）
-        if (voiceEngine === 'pack' && !packDead) {
-            var keepFiles = packResolve(text);
-            if (keepFiles) return speakPackSeq(keepFiles, opts);
-        }
-
-        // 本机没有可用的中文语音（大多数手机浏览器）→ 离线语音包优先于在线
-        // （包内文件由 Service Worker 预缓存，彻底断网也能正常播报）
-        if (!packDead && hasChineseVoice() !== true) {
+        // 离线语音包优先：只要包内能整句拼出这句就用包。
+        // 为什么不再等"确认手机没有中文 TTS"才用包：很多手机浏览器（微信/安卓 X5 尤甚）
+        // 会报告"有中文语音引擎"，实际播出来完全没有声音 —— 这正是"以前有声音、后来没声音"的坑。
+        // 包播不出声（音频没解锁/文件缺失）时，才回退到在线/本机引擎。
+        if (!packDead) {
             var packFiles = packResolve(text);
-            if (packFiles) return speakPackSeq(packFiles, opts);
+            if (packFiles) {
+                return speakPackSeq(packFiles, opts).then(function (played) {
+                    if (played) return;
+                    return speakOtherEngines(text, opts);
+                });
+            }
         }
+        return speakOtherEngines(text, opts);
+    }
+
+    // 语音包覆盖不到的句子（英文、生僻字）或包播不出声时的引擎链：在线 → 本机 TTS → 提示音
+    function speakOtherEngines(text, opts) {
+        opts = opts || {};
+        if (voiceEngine === 'pack') voiceEngine = null;
 
         // 已确认在线语音可用：直接在线播
         if (voiceEngine === 'online' && !onlineDead) return speakOnline(text, opts);
