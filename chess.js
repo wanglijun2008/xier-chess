@@ -424,11 +424,11 @@ class ChineseChess {
         let target;
         if (action === '平') {
             target = uToCol;
-        } else if (piece.type === 'rook' || piece.type === 'cannon' || piece.type === 'king') {
-            // 直线棋子：进/退N步
+        } else if (piece.type === 'rook' || piece.type === 'cannon' || piece.type === 'king' || piece.type === 'pawn') {
+            // 直线棋子（车/炮/将帅/兵卒）：进/退N步（兵卒只能进一，报"进一"）
             target = Math.abs(toRow - fromRow);
         } else {
-            // 斜线/日字棋子：进/退到第N列
+            // 斜线/日字棋子（马/相象/仕士）：进/退到第N列
             target = uToCol;
         }
 
