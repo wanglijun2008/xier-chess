@@ -7,7 +7,7 @@
     <meta name="mobile-web-app-capable" content="yes">
     <title>西尔象棋盲棋</title>
     <link rel="manifest" href="manifest.json">
-    <link rel="stylesheet" href="style.css?v=20261007h">
+    <link rel="stylesheet" href="style.css?v=20261011">
 </head>
 <body>
     <div id="app">
@@ -15,7 +15,7 @@
         <div id="status-bar" aria-live="polite">
             <span id="turn-info">红方走棋</span>
             <span id="round-info">第 1 回合</span>
-            <span id="version-info" title="点击查看版本信息">v20261007h</span>
+            <span id="version-info" title="点击查看版本信息">v20261011</span>
         </div>
 
         <!-- 可见消息区域（语音失效时也能看到提示） -->
@@ -32,6 +32,9 @@
             <input type="text" id="move-input" placeholder="输入棋谱，如炮2平5或炮二平五" autocomplete="off" aria-label="棋谱输入框">
             <button id="btn-send" aria-label="发送棋谱">走棋</button>
         </div>
+
+        <!-- 电脑键盘提示（仅鼠标键盘环境显示） -->
+        <div id="kb-hint" aria-hidden="true">电脑操作：方向键移动 · 空格落子 · 回车报位置 · B局面 · L重复 · U悔棋 · N新局 · R棋谱 · S停止 · H帮助</div>
 
         <!-- 工具栏 -->
         <div id="toolbar">
@@ -138,14 +141,14 @@
         <button id="lb-info" aria-label="打开播放控制">第 0 / 0 步</button>
     </div>
 
-    <script src="chess.js?v=20261007h"></script>
-    <script src="record-player.js?v=20261007h"></script>
-    <script src="games-builtin.js?v=20261007h"></script>
-    <script src="audio-pack.js?v=20261007h"></script>
-    <script src="app.js?v=20261007h"></script>
+    <script src="chess.js?v=20261011"></script>
+    <script src="record-player.js?v=20261011"></script>
+    <script src="games-builtin.js?v=20261011"></script>
+    <script src="audio-pack.js?v=20261011"></script>
+    <script src="app.js?v=20261011"></script>
     <script>
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('service-worker.js?v=20261007h').then(function(reg) {
+        if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+            navigator.serviceWorker.register('service-worker.js?v=20261011').then(function(reg) {
                 // 检测到新版本时立即刷新
                 if (reg && reg.waiting) reg.waiting.postMessage({type: 'SKIP_WAITING'});
             });

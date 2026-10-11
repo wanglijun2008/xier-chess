@@ -3,9 +3,10 @@
     'use strict';
 
     // 版本号：每次更新递增，状态栏右下角可见，点击查看版本信息
-    const APP_VERSION = '20261007h';
-    const APP_VERSION_DATE = '2026-10-07';
+    const APP_VERSION = '20261011';
+    const APP_VERSION_DATE = '2026-10-11';
     const APP_UPDATE_NOTES = [
+        '20261011: 网页版与单机版合并为一套代码。新增电脑操作：方向键移动光标、空格选子落子、回车报光标位置、鼠标点击走棋；新增一键打包脚本，生成内嵌语音包的单机版HTML，电脑手机双击即用、断网可用',
         'h: 修复语音不清（两句话重叠播放的bug）；轻声母字（七/车/一/九/兵/卒）不再被裁掉字头；新增听棋悬浮控制条，弹窗收起后也能随时暂停/跳步',
         'g: 语音包改用Web Audio拼接播放：裁掉每段录音首尾静音、整句一次播出，字与字之间不再拖长（与每步间隔设置无关）',
         'f: 点选棋谱即自动听棋并收起弹窗；关闭弹窗不再打断听棋；弹窗高度适配手机（底部按钮可点）',
@@ -30,6 +31,12 @@
     // 触摸状态
     let touchStart = null;
     let selectedPos = null;
+
+    // 键盘光标（电脑上用方向键操作棋盘；鼠标点击也会移动它）
+    let cursorRow = 9;
+    let cursorCol = 4;
+    // 最近一次触摸时间：用于忽略触摸后浏览器补发的合成 click（避免手机上走两步）
+    let lastTouchTime = 0;
 
     // 语音合成
     const synth = window.speechSynthesis;
@@ -773,7 +780,7 @@
         ctx.fillStyle = '#2d2d2d';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        ctx.strokeStyle = '#666';
+        ctx.strokeStyle = '#8f8f8f';
         ctx.lineWidth = 1;
 
         const { padding, cellSize } = BOARD_CONFIG;
@@ -822,8 +829,8 @@
         ctx.stroke();
 
         // 楚河汉界
-        ctx.fillStyle = '#888';
-        ctx.font = '20px serif';
+        ctx.fillStyle = '#999';
+        ctx.font = Math.max(14, Math.round(cellSize * 0.55)) + 'px serif';
         ctx.textAlign = 'center';
         ctx.fillText('楚 河', padding + 2 * cellSize, padding + 4.5 * cellSize);
         ctx.fillText('汉 界', padding + 6 * cellSize, padding + 4.5 * cellSize);
@@ -833,6 +840,9 @@
         if (selectedPos) {
             drawSelection(selectedPos.row, selectedPos.col);
         }
+
+        // 键盘/鼠标光标（橙色虚线框）
+        drawCursor(cursorRow, cursorCol);
 
         // 游戏结束时显示半透明遮罩
         if (game.gameOver) {
@@ -871,12 +881,12 @@
         ctx.fillStyle = piece.color === 'red' ? '#8b0000' : '#1a1a1a';
         ctx.fill();
 
-        ctx.strokeStyle = piece.color === 'red' ? '#ff6b6b' : '#666';
+        ctx.strokeStyle = piece.color === 'red' ? '#ff6b6b' : '#8a8a8a';
         ctx.lineWidth = 2;
         ctx.stroke();
 
         ctx.fillStyle = piece.color === 'red' ? '#fff' : '#ccc';
-        ctx.font = 'bold 18px serif';
+        ctx.font = 'bold ' + Math.max(13, Math.round(BOARD_CONFIG.cellSize * 0.5)) + 'px serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(piece.name, x, y);
@@ -896,11 +906,28 @@
         ctx.stroke();
     }
 
-    // 坐标转换
+    // 绘制键盘/鼠标光标（橙色虚线方框，与绿色选中圈区分）
+    function drawCursor(row, col) {
+        const { padding, cellSize } = BOARD_CONFIG;
+        const x = padding + col * cellSize;
+        const y = padding + row * cellSize;
+        const half = cellSize * 0.5;
+
+        ctx.save();
+        ctx.strokeStyle = '#FF9800';
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash([7, 5]);
+        ctx.strokeRect(x - half, y - half, half * 2, half * 2);
+        ctx.restore();
+    }
+
+    // 坐标转换（兼容画布被 CSS 缩放的情况）
     function screenToBoard(x, y) {
         const rect = canvas.getBoundingClientRect();
-        const canvasX = x - rect.left;
-        const canvasY = y - rect.top;
+        const scaleX = rect.width ? canvas.width / rect.width : 1;
+        const scaleY = rect.height ? canvas.height / rect.height : 1;
+        const canvasX = (x - rect.left) * scaleX;
+        const canvasY = (y - rect.top) * scaleY;
 
         const { padding, cellSize } = BOARD_CONFIG;
         const col = Math.round((canvasX - padding) / cellSize);
@@ -915,6 +942,7 @@
     // 触摸事件处理
     function handleTouchStart(e) {
         e.preventDefault();
+        lastTouchTime = Date.now();
         const touch = e.touches[0];
         touchStart = {
             x: touch.clientX,
@@ -938,6 +966,8 @@
         if (distance < 10 && duration < 300) {
             const pos = screenToBoard(touchStart.x, touchStart.y);
             if (pos) {
+                cursorRow = pos.row;
+                cursorCol = pos.col;
                 handleTap(pos.row, pos.col);
             }
         }
@@ -1303,9 +1333,18 @@
         return packCtx;
     }
 
+    // 单机版：语音包 mp3 由打包脚本内嵌为 data:URI（window.XIER_AUDIO_EMBED），
+    // 双击打开（file://）时 fetch 不到 audio/ 目录，改用内嵌数据
+    function packUrl(url) {
+        var m = /([^\/]+\.mp3)$/.exec(String(url || ''));
+        var map = window.XIER_AUDIO_EMBED;
+        if (m && map && map[m[1]]) return map[m[1]];
+        return url;
+    }
+
     function loadPackBuffer(url) {
         if (!packBufCache[url]) {
-            packBufCache[url] = fetch(url).then(function (r) {
+            packBufCache[url] = fetch(packUrl(url)).then(function (r) {
                 if (!r.ok) throw new Error('http ' + r.status);
                 return r.arrayBuffer();
             }).then(function (ab) {
@@ -1450,7 +1489,7 @@
                     packDead = true;
                     resolve();
                 };
-                a.src = item;
+                a.src = packUrl(item);
                 var p = a.play();
                 if (p && p.catch) p.catch(function () {
                     // 自动播放被浏览器拦（还没解锁）：本次不出声，不算包坏了
@@ -1624,9 +1663,96 @@
     }
 
     // 设置事件监听
+    // ========== 电脑操作：键盘光标 + 鼠标点击 ==========
+    // 光标位置描述（供盲听：第几行第几列、区域、棋子）
+    function describeCursorPosition() {
+        const piece = game.getPiece(cursorRow, cursorCol);
+        let base = '第' + numToCn(cursorRow + 1) + '行，第' + numToCn(cursorCol + 1) + '列';
+        const area = [];
+        if (cursorRow <= 4) area.push('黑方区域'); else area.push('红方区域');
+        if (cursorRow <= 2 && cursorCol >= 3 && cursorCol <= 5) area.push('黑方九宫');
+        if (cursorRow >= 7 && cursorCol >= 3 && cursorCol <= 5) area.push('红方九宫');
+        if (cursorRow === 4 || cursorRow === 5) area.push('楚河汉界');
+        const cannonMarks = [[2,1],[2,7],[7,1],[7,7]];
+        const pawnMarks = [[3,0],[3,2],[3,4],[3,6],[3,8],[6,0],[6,2],[6,4],[6,6],[6,8]];
+        if (cannonMarks.some(m => m[0] === cursorRow && m[1] === cursorCol)) area.push('炮位');
+        if (pawnMarks.some(m => m[0] === cursorRow && m[1] === cursorCol)) area.push('兵位');
+        if (area.length) base += '，' + area.join('，');
+        base += piece
+            ? '，' + (piece.color === 'red' ? '红方' : '黑方') + piece.name
+            : '，空位';
+        return base;
+    }
+
+    function moveCursor(dRow, dCol) {
+        cursorRow = Math.max(0, Math.min(BOARD_CONFIG.rows - 1, cursorRow + dRow));
+        cursorCol = Math.max(0, Math.min(BOARD_CONFIG.cols - 1, cursorCol + dCol));
+        drawBoard();
+        speak(describeCursorPosition());
+    }
+
+    // 停止当前语音播报（含听棋回放暂停）
+    function stopSpeech() {
+        try { if (synth) synth.cancel(); } catch (e) {}
+        try { packAudioStop(); } catch (e) {}
+        packSeq++; // 让排队中的语音包播放全部失效
+        try { if (packSrcNode) { packSrcNode.stop(); packSrcNode = null; } } catch (e) {}
+        try { if (onlineAudio) { onlineAudio.pause(); } } catch (e) {}
+        try { if (recordPlayer && recordPlayer.playing) recordPlayer.pause(); } catch (e) {}
+        showMessage('已停止语音');
+    }
+
+    // 键盘快捷键（电脑）
+    function handleKey(e) {
+        // 输入框、文本域中的按键不拦截
+        const t = e.target;
+        if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+        if (e.ctrlKey || e.altKey || e.metaKey) return;
+
+        const modal = document.getElementById('record-modal');
+        const modalOpen = modal && modal.style.display !== 'none';
+        const k = e.key;
+
+        if (k === 'Escape') {
+            if (modalOpen) { e.preventDefault(); closeRecordModal(true); }
+            return;
+        }
+        // 棋谱弹窗打开时不操作棋盘
+        if (modalOpen) return;
+
+        if (k === 'ArrowUp') { e.preventDefault(); moveCursor(-1, 0); }
+        else if (k === 'ArrowDown') { e.preventDefault(); moveCursor(1, 0); }
+        else if (k === 'ArrowLeft') { e.preventDefault(); moveCursor(0, -1); }
+        else if (k === 'ArrowRight') { e.preventDefault(); moveCursor(0, 1); }
+        else if (k === ' ' || k === 'Spacebar') { e.preventDefault(); handleTap(cursorRow, cursorCol); }
+        else if (k === 'Enter' || k === 'p' || k === 'P') { e.preventDefault(); speak(describeCursorPosition()); }
+        else if (k === 'b' || k === 'B') { e.preventDefault(); speakBoard(); }
+        else if (k === 'l' || k === 'L') { e.preventDefault(); repeatLast(); }
+        else if (k === 'u' || k === 'U') { e.preventDefault(); undoMove(); }
+        else if (k === 'n' || k === 'N') { e.preventDefault(); newGame(); }
+        else if (k === 'm' || k === 'M') { e.preventDefault(); toggleMode(); }
+        else if (k === 'r' || k === 'R') { e.preventDefault(); openRecordModal(); }
+        else if (k === 's' || k === 'S') { e.preventDefault(); stopSpeech(); }
+        else if (k === 'h' || k === 'H') { e.preventDefault(); showHelp(); }
+    }
+
+    // 鼠标点击棋盘（电脑）：移动光标并选子/落子
+    function handleCanvasClick(e) {
+        // 触摸后浏览器会补发合成 click —— 忽略，避免手机上连走两步
+        if (Date.now() - lastTouchTime < 800) return;
+        const pos = screenToBoard(e.clientX, e.clientY);
+        if (!pos) return;
+        cursorRow = pos.row;
+        cursorCol = pos.col;
+        drawBoard();
+        handleTap(pos.row, pos.col);
+    }
+
     function setupEventListeners() {
         canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
         canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
+        canvas.addEventListener('click', handleCanvasClick);
+        document.addEventListener('keydown', handleKey);
 
         document.getElementById('btn-new').addEventListener('click', newGame);
         document.getElementById('btn-undo').addEventListener('click', undoMove);
@@ -1753,7 +1879,7 @@
 
     // 帮助
     function showHelp() {
-        const help = '操作说明：点击棋子选中，滑动走棋。输入或说出棋谱，如炮2平5或炮二平五，同列有相同棋子时加前或后，如前车2进3。列号1到9从自己右边向左数，行号0到9从自己向对方数，双方各以自己的右下角为基准。点击棋谱按钮可导入棋谱听棋。底部按钮：新局、悔棋、播报、重复、模式、语音、列表、棋谱、帮助。';
+        const help = '操作说明：点击棋子选中，滑动走棋。输入或说出棋谱，如炮2平5或炮二平五，同列有相同棋子时加前或后，如前车2进3。列号1到9从自己右边向左数，行号0到9从自己向对方数，双方各以自己的右下角为基准。点击棋谱按钮可导入棋谱听棋。底部按钮：新局、悔棋、播报、重复、模式、语音、列表、棋谱、帮助。电脑键盘：方向键移动光标，空格选子或落子，回车播报光标位置，B播报局面，L重复上一句，U悔棋，N新局，M切换模式，R棋谱回放，S停止语音，H帮助。';
         speak(help);
         lastSpokenMessage = help;
     }
